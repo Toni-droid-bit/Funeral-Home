@@ -1,16 +1,210 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { api } from "@shared/routes";
+import { z } from "zod";
+import { setupAuth, registerAuthRoutes } from "./replit_integrations/auth";
+import { registerAudioRoutes } from "./replit_integrations/audio";
+import { registerImageRoutes } from "./replit_integrations/image";
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  // put application routes here
-  // prefix all routes with /api
+  // Auth Setup
+  await setupAuth(app);
+  registerAuthRoutes(app);
+  
+  // AI Integrations
+  registerAudioRoutes(app);
+  registerImageRoutes(app);
 
-  // use storage to perform CRUD operations on the storage interface
-  // e.g. storage.insertUser(user) or storage.getUserByUsername(username)
+  // === API ROUTES ===
+
+  // Cases
+  app.get(api.cases.list.path, async (req, res) => {
+    const cases = await storage.getCases();
+    res.json(cases);
+  });
+
+  app.get(api.cases.get.path, async (req, res) => {
+    const id = Number(req.params.id);
+    const caseItem = await storage.getCase(id);
+    if (!caseItem) {
+      return res.status(404).json({ message: "Case not found" });
+    }
+    
+    // Fetch related data
+    const calls = await storage.getCallsByCaseId(id);
+    const meetings = await storage.getMeetingsByCaseId(id);
+    const documents = await storage.getDocumentsByCaseId(id);
+
+    res.json({ ...caseItem, calls, meetings, documents });
+  });
+
+  app.post(api.cases.create.path, async (req, res) => {
+    try {
+      const input = api.cases.create.input.parse(req.body);
+      const newCase = await storage.createCase(input);
+      res.status(201).json(newCase);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0].message });
+      }
+      throw err;
+    }
+  });
+
+  app.put(api.cases.update.path, async (req, res) => {
+    const id = Number(req.params.id);
+    try {
+      const input = api.cases.update.input.parse(req.body);
+      const updatedCase = await storage.updateCase(id, input);
+      if (!updatedCase) {
+        return res.status(404).json({ message: "Case not found" });
+      }
+      res.json(updatedCase);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0].message });
+      }
+      throw err;
+    }
+  });
+
+  // Calls
+  app.get(api.calls.list.path, async (req, res) => {
+    const calls = await storage.getCalls();
+    res.json(calls);
+  });
+
+  app.get(api.calls.get.path, async (req, res) => {
+    const id = Number(req.params.id);
+    const call = await storage.getCall(id);
+    if (!call) return res.status(404).json({ message: "Call not found" });
+    res.json(call);
+  });
+
+  app.post(api.calls.create.path, async (req, res) => {
+    try {
+      const input = api.calls.create.input.parse(req.body);
+      const newCall = await storage.createCall(input);
+      res.status(201).json(newCall);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0].message });
+      }
+      throw err;
+    }
+  });
+
+  // Meetings
+  app.get(api.meetings.list.path, async (req, res) => {
+    const meetings = await storage.getMeetings();
+    res.json(meetings);
+  });
+
+  app.get(api.meetings.get.path, async (req, res) => {
+    const id = Number(req.params.id);
+    const meeting = await storage.getMeeting(id);
+    if (!meeting) return res.status(404).json({ message: "Meeting not found" });
+    res.json(meeting);
+  });
+
+  app.post(api.meetings.create.path, async (req, res) => {
+    try {
+      const input = api.meetings.create.input.parse(req.body);
+      const newMeeting = await storage.createMeeting(input);
+      res.status(201).json(newMeeting);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0].message });
+      }
+      throw err;
+    }
+  });
+
+  // Documents
+  app.get(api.documents.list.path, async (req, res) => {
+    const docs = await storage.getDocuments();
+    res.json(docs);
+  });
+
+  app.post(api.documents.create.path, async (req, res) => {
+    try {
+      const input = api.documents.create.input.parse(req.body);
+      const newDoc = await storage.createDocument(input);
+      res.status(201).json(newDoc);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0].message });
+      }
+      throw err;
+    }
+  });
+
+  // Dashboard Stats
+  app.get(api.dashboard.stats.path, async (req, res) => {
+    const stats = await storage.getDashboardStats();
+    res.json(stats);
+  });
+
+  // Seed Data
+  await seedDatabase();
 
   return httpServer;
+}
+
+async function seedDatabase() {
+  const homes = await storage.getFuneralHomes();
+  if (homes.length === 0) {
+    const home = await storage.createFuneralHome({
+      name: "Evergreen Memorial Services",
+      address: "123 Serenity Lane, London, UK",
+      phone: "+44 20 7946 0123",
+      primaryLanguage: "English",
+      supportedLanguages: ["English", "Polish", "Punjabi", "Urdu"],
+    });
+
+    const case1 = await storage.createCase({
+      deceasedName: "Janusz Kowalski",
+      dateOfDeath: new Date("2025-01-28"),
+      status: "active",
+      religion: "Roman Catholic",
+      language: "Polish",
+      funeralHomeId: home.id,
+      notes: "Family prefers Polish speaking director if possible.",
+    });
+
+    await storage.createCall({
+      caseId: case1.id,
+      callerPhone: "+44 7700 900456",
+      callerName: "Maria Kowalski",
+      detectedLanguage: "Polish",
+      transcript: "Dzień dobry, dzwonię w sprawie mojego męża, Janusza. Zmarł dziś rano w domu. Nie wiem co robić. (Good morning, I am calling about my husband, Janusz. He passed away this morning at home. I don't know what to do.)",
+      summary: "Wife reporting death of husband at home. Needs guidance on first steps. Distressed.",
+      sentiment: "Grief-stricken, Anxious",
+      status: "completed",
+    });
+
+    const case2 = await storage.createCase({
+      deceasedName: "Arthur Thompson",
+      dateOfDeath: new Date("2025-01-30"),
+      status: "active",
+      religion: "Secular",
+      language: "English",
+      funeralHomeId: home.id,
+      notes: "Simple cremation requested.",
+    });
+
+    await storage.createMeeting({
+      caseId: case2.id,
+      directorName: "Sarah Jenkins",
+      language: "English",
+      transcript: "Director: Good afternoon, Mrs. Thompson. I'm so sorry for your loss. We're here to help you through this. Wife: Thank you. Arthur didn't want anything fancy. Just a simple cremation.",
+      summary: "Initial arrangement meeting. Family confirmed preference for direct cremation. No service requested at this time.",
+      actionItems: ["Prepare cremation paperwork", "Schedule collection from hospital"],
+      status: "completed",
+    });
+  }
 }
