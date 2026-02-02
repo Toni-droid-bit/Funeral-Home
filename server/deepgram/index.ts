@@ -69,8 +69,15 @@ export function setupDeepgramWebSocket(httpServer: Server) {
                   const speechFinal = response.speech_final;
 
                   if (transcript.trim()) {
-                    if (isFinal && speechFinal) {
-                      fullTranscript += (fullTranscript ? '\n' : '') + transcript;
+                    // Append to full transcript when we get a final result
+                    // Use speechFinal to add newlines between utterances
+                    if (isFinal) {
+                      if (speechFinal) {
+                        fullTranscript += (fullTranscript ? '\n' : '') + transcript;
+                      } else {
+                        // For non-speech-final but still final results, append with space
+                        fullTranscript += (fullTranscript ? ' ' : '') + transcript;
+                      }
                     }
 
                     clientWs.send(

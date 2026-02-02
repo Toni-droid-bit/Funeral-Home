@@ -196,6 +196,34 @@ export default function Communications() {
     },
   });
 
+  // Create meeting mutation with auto-extraction
+  const createMeetingMutation = useMutation({
+    mutationFn: async (meetingData: { caseId: number; directorName: string; language: string; transcript: string }) => {
+      return apiRequest("POST", "/api/meetings", {
+        ...meetingData,
+        status: "completed",
+      });
+    },
+    onSuccess: async (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/meetings"] });
+      toast({
+        title: "Meeting Saved",
+        description: "Transcript saved. Now extracting intake data...",
+      });
+      // Automatically trigger extraction after saving
+      if (data?.id) {
+        reprocessMeetingMutation.mutate(data.id);
+      }
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Save Failed",
+        description: error?.message || "Could not save meeting transcript",
+        variant: "destructive",
+      });
+    },
+  });
+
   const isLoading = callsLoading || meetingsLoading;
 
   // Combine calls and meetings into unified timeline
@@ -341,7 +369,8 @@ export default function Communications() {
         }
 
         if (data.type === 'transcript') {
-          if (data.speechFinal && data.isFinal) {
+          // Update live transcript whenever we get final results
+          if (data.isFinal) {
             setLiveTranscript(data.fullTranscript);
           }
         }
@@ -402,6 +431,17 @@ export default function Communications() {
     cleanupAudio();
     setIsRecording(false);
     setIsConnecting(false);
+    
+    // Automatically save the meeting and trigger extraction
+    if (selectedCaseId && finalTranscript && finalTranscript !== "No transcript captured") {
+      createMeetingMutation.mutate({
+        caseId: parseInt(selectedCaseId),
+        directorName: directorName || "Unknown Director",
+        language: language,
+        transcript: finalTranscript,
+      });
+    }
+    
     setMode("review");
   };
 
