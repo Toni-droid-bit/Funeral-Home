@@ -74,6 +74,50 @@ const LANGUAGES = [
   { code: "nl", label: "Dutch" },
 ];
 
+// ── Checklist Types ──
+
+interface ChecklistItem {
+  id: string;
+  question: string;
+  category: "critical" | "important" | "supplementary";
+  fieldMapping?: string;
+  isCustom: boolean;
+}
+
+interface ChecklistTemplate {
+  id: number;
+  name: string;
+  description?: string;
+  isDefault: boolean;
+  items: ChecklistItem[];
+}
+
+const CATEGORY_CONFIG = {
+  critical: { 
+    label: "Critical", 
+    color: "text-red-600 dark:text-red-400",
+    bgColor: "bg-red-50 dark:bg-red-900/20",
+    iconColor: "text-red-500",
+  },
+  important: { 
+    label: "Important", 
+    color: "text-amber-600 dark:text-amber-400",
+    bgColor: "bg-amber-50 dark:bg-amber-900/20",
+    iconColor: "text-amber-500",
+  },
+  supplementary: { 
+    label: "Supplementary", 
+    color: "text-blue-600 dark:text-blue-400",
+    bgColor: "bg-blue-50 dark:bg-blue-900/20",
+    iconColor: "text-blue-500",
+  },
+};
+
+// Helper to get nested value from object using dot notation
+function getNestedValue(obj: any, path: string): any {
+  return path.split('.').reduce((current, key) => current?.[key], obj);
+}
+
 // ── Component ──
 
 export default function XScribeMeetings() {
@@ -81,6 +125,11 @@ export default function XScribeMeetings() {
   const { data: cases } = useQuery<any[]>({ queryKey: ["/api/cases"] });
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  
+  // Fetch the default checklist template
+  const { data: checklistTemplate } = useQuery<ChecklistTemplate>({
+    queryKey: ["/api/checklist-templates/default"],
+  });
 
   // State
   const [mode, setMode] = useState<Mode>("list");
@@ -108,9 +157,8 @@ export default function XScribeMeetings() {
   // Document generation mutation
   const generateDocsMutation = useMutation({
     mutationFn: async (caseId: number) => {
-      return apiRequest(`/api/cases/${caseId}/generate-documents`, {
-        method: "POST",
-        body: JSON.stringify({ documentTypes: ["contract", "obituary", "service_program"] }),
+      return apiRequest("POST", `/api/cases/${caseId}/generate-documents`, { 
+        documentTypes: ["contract", "obituary", "service_program"] 
       });
     },
     onSuccess: () => {
@@ -713,47 +761,57 @@ export default function XScribeMeetings() {
             </CardContent>
           </Card>
 
-          {/* Missing Info Checklist */}
-          {selectedCaseId && intakeData && (
-            <Card className="shadow-sm h-fit">
+          {/* Custom Checklist */}
+          {checklistTemplate && (
+            <Card className="shadow-sm h-fit max-h-[600px] overflow-y-auto">
               <CardContent className="p-4">
-                <h3 className="font-medium text-foreground mb-3 flex items-center gap-2">
+                <h3 className="font-medium text-foreground mb-1 flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 text-amber-500" />
-                  Information Checklist
+                  Meeting Checklist
                 </h3>
-                <div className="space-y-2">
-                  {intakeData.checklist?.map((item: any) => (
-                    <div 
-                      key={item.field} 
-                      className={`flex items-center gap-2 p-2 rounded text-sm ${
-                        item.completed 
-                          ? "bg-green-50 dark:bg-green-900/20" 
-                          : "bg-amber-50 dark:bg-amber-900/20"
-                      }`}
-                    >
-                      {item.completed ? (
-                        <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0" />
-                      ) : (
-                        <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0" />
-                      )}
-                      <span className={item.completed ? "text-green-700 dark:text-green-300" : "text-amber-700 dark:text-amber-300"}>
-                        {item.label}
-                      </span>
+                <p className="text-xs text-muted-foreground mb-3">{checklistTemplate.name}</p>
+                
+                {(["critical", "important", "supplementary"] as const).map(category => {
+                  const config = CATEGORY_CONFIG[category];
+                  const items = (checklistTemplate.items as ChecklistItem[]).filter(i => i.category === category);
+                  if (items.length === 0) return null;
+                  
+                  return (
+                    <div key={category} className="mb-4">
+                      <h4 className={`text-xs font-medium uppercase tracking-wider mb-2 ${config.color}`}>
+                        {config.label} ({items.length})
+                      </h4>
+                      <div className="space-y-1">
+                        {items.map(item => {
+                          const isCompleted = item.fieldMapping && intakeData?.intakeData 
+                            ? getNestedValue(intakeData.intakeData, item.fieldMapping) 
+                            : false;
+                          
+                          return (
+                            <div 
+                              key={item.id}
+                              className={`flex items-start gap-2 p-2 rounded text-sm ${
+                                isCompleted 
+                                  ? "bg-green-50 dark:bg-green-900/20" 
+                                  : config.bgColor
+                              }`}
+                              data-testid={`checklist-item-${item.id}`}
+                            >
+                              {isCompleted ? (
+                                <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
+                              ) : (
+                                <div className={`w-4 h-4 border rounded flex-shrink-0 mt-0.5 ${config.iconColor} border-current`} />
+                              )}
+                              <span className={isCompleted ? "text-green-700 dark:text-green-300" : "text-foreground"}>
+                                {item.question}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                  ))}
-                </div>
-                <div className="mt-4 pt-3 border-t">
-                  <div className="flex items-center justify-between text-sm mb-2">
-                    <span className="text-muted-foreground">Completion</span>
-                    <span className="font-medium">{intakeData.completedPercentage}%</span>
-                  </div>
-                  <div className="w-full bg-muted rounded-full h-2">
-                    <div 
-                      className="bg-primary h-2 rounded-full transition-all" 
-                      style={{ width: `${intakeData.completedPercentage}%` }}
-                    />
-                  </div>
-                </div>
+                  );
+                })}
               </CardContent>
             </Card>
           )}

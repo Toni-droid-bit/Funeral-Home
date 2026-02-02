@@ -12,6 +12,7 @@ import CasesList from "@/pages/cases-list";
 import CaseDetail from "@/pages/case-detail";
 import XLinkCalls from "@/pages/xlink-calls";
 import XScribeMeetings from "@/pages/xscribe-meetings";
+import ChecklistSettings from "@/pages/checklist-settings";
 import Login from "@/pages/login";
 import NotFound from "@/pages/not-found";
 
@@ -60,6 +61,9 @@ function Router() {
       </Route>
       <Route path="/meetings">
         {() => <PrivateRoute component={XScribeMeetings} />}
+      </Route>
+      <Route path="/settings/checklists">
+        {() => <PrivateRoute component={ChecklistSettings} />}
       </Route>
 
       <Route component={NotFound} />

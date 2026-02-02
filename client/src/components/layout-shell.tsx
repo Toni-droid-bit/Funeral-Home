@@ -24,11 +24,17 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
+import { ClipboardList } from "lucide-react";
+
 const NAVIGATION = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Cases", href: "/cases", icon: Users },
   { name: "xLink Calls", href: "/calls", icon: Phone },
   { name: "xScribe Meetings", href: "/meetings", icon: Mic },
+];
+
+const SETTINGS_NAVIGATION = [
+  { name: "Checklist Settings", href: "/settings/checklists", icon: ClipboardList },
 ];
 
 export function LayoutShell({ children }: { children: React.ReactNode }) {
@@ -63,10 +69,25 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
       </nav>
 
       <div className="p-4 border-t border-primary-foreground/10">
-        <div className="flex items-center gap-3 px-4 py-3 text-primary-foreground/60 hover:text-white cursor-pointer transition-colors">
-          <Settings className="w-5 h-5" />
-          <span className="text-sm font-medium">Settings</span>
-        </div>
+        <p className="px-4 py-2 text-xs text-primary-foreground/40 uppercase tracking-wider">Settings</p>
+        {SETTINGS_NAVIGATION.map((item) => {
+          const isActive = location === item.href;
+          return (
+            <Link key={item.name} href={item.href}>
+              <div
+                className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer ${
+                  isActive
+                    ? "bg-primary-foreground/10 text-white shadow-lg shadow-black/10"
+                    : "text-primary-foreground/60 hover:text-white hover:bg-primary-foreground/5"
+                }`}
+                data-testid={`nav-${item.name.toLowerCase().replace(/\s+/g, '-')}`}
+              >
+                <item.icon className={`w-5 h-5 ${isActive ? "text-secondary" : ""}`} />
+                {item.name}
+              </div>
+            </Link>
+          );
+        })}
       </div>
     </div>
   );
@@ -107,7 +128,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="relative h-10 w-10 rounded-full">
                   <Avatar>
-                    <AvatarImage src={user?.profileImageUrl} />
+                    <AvatarImage src={user?.profileImageUrl ?? undefined} />
                     <AvatarFallback className="bg-primary/10 text-primary">
                       {user?.firstName?.[0] || "U"}
                     </AvatarFallback>
