@@ -3,8 +3,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { 
   LayoutDashboard, 
   Users, 
-  Phone, 
-  Mic, 
+  MessageSquare, 
   Settings, 
   LogOut, 
   Menu,
@@ -29,8 +28,7 @@ import { ClipboardList } from "lucide-react";
 const NAVIGATION = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Cases", href: "/cases", icon: Users },
-  { name: "xLink Calls", href: "/calls", icon: Phone },
-  { name: "xScribe Meetings", href: "/meetings", icon: Mic },
+  { name: "Communications", href: "/communications", icon: MessageSquare },
 ];
 
 const SETTINGS_NAVIGATION = [

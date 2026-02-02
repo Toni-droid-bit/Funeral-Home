@@ -312,7 +312,7 @@ export default function CaseDetail() {
                     <div className="text-center py-8 text-muted-foreground">
                       <Mic className="w-12 h-12 mx-auto opacity-20 mb-3" />
                       <p>No arrangement meetings recorded yet.</p>
-                      <Link href="/meetings">
+                      <Link href="/communications">
                         <Button variant="outline" className="mt-4">Start Recording</Button>
                       </Link>
                     </div>
@@ -343,7 +343,7 @@ export default function CaseDetail() {
               <CardTitle className="text-lg">Quick Actions</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              <Link href="/meetings">
+              <Link href="/communications">
                 <Button className="w-full justify-start gap-2" variant="outline">
                   <Mic className="w-4 h-4 text-blue-600" />
                   Start Arrangement Meeting

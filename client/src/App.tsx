@@ -10,8 +10,7 @@ import { Loader2 } from "lucide-react";
 import Dashboard from "@/pages/dashboard";
 import CasesList from "@/pages/cases-list";
 import CaseDetail from "@/pages/case-detail";
-import XLinkCalls from "@/pages/xlink-calls";
-import XScribeMeetings from "@/pages/xscribe-meetings";
+import Communications from "@/pages/communications";
 import ChecklistSettings from "@/pages/checklist-settings";
 import Login from "@/pages/login";
 import NotFound from "@/pages/not-found";
@@ -56,11 +55,8 @@ function Router() {
       <Route path="/cases/:id">
         {() => <PrivateRoute component={CaseDetail} />}
       </Route>
-      <Route path="/calls">
-        {() => <PrivateRoute component={XLinkCalls} />}
-      </Route>
-      <Route path="/meetings">
-        {() => <PrivateRoute component={XScribeMeetings} />}
+      <Route path="/communications">
+        {() => <PrivateRoute component={Communications} />}
       </Route>
       <Route path="/settings/checklists">
         {() => <PrivateRoute component={ChecklistSettings} />}
