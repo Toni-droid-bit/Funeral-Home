@@ -45,6 +45,7 @@ export interface IStorage {
   getDocuments(): Promise<Document[]>;
   getDocumentsByCaseId(caseId: number): Promise<Document[]>;
   createDocument(data: InsertDocument): Promise<Document>;
+  updateDocument(id: number, data: Partial<InsertDocument>): Promise<Document>;
   
   // Checklist Templates
   getChecklistTemplates(): Promise<ChecklistTemplate[]>;
@@ -165,6 +166,11 @@ export class DatabaseStorage implements IStorage {
 
   async createDocument(data: InsertDocument): Promise<Document> {
     const [d] = await db.insert(documents).values(data).returning();
+    return d;
+  }
+
+  async updateDocument(id: number, data: Partial<InsertDocument>): Promise<Document> {
+    const [d] = await db.update(documents).set(data).where(eq(documents.id, id)).returning();
     return d;
   }
 

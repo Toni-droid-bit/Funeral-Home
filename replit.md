@@ -99,22 +99,31 @@ Directors can customize intake checklists for arrangement meetings.
 - Communications Hub review mode shows live checklist with toggle functionality
 
 ## AI Transcript Extraction
-The system uses OpenAI to automatically extract intake data from call transcripts.
+The system uses OpenAI to automatically extract intake data from both call and meeting transcripts.
 
 ### Extracted Fields
 - **First Call Essentials**: Deceased name, relationship to caller, date of death, contact number
 - **Service Preferences**: Religion, burial preference, urgency level, location preference
+- **Meeting Details**: Cemetery, clothing, obituary, flowers, music, readings, reception, donations
 - **Automatic Urgency**: Muslim/Jewish cases auto-set to "urgent-24hr" for 24-hour burial requirements
 
 ### API Endpoints
 - `POST /api/calls/:id/reprocess` - Re-parse call transcript and update case intake data
+- `POST /api/meetings/:id/reprocess` - Re-parse meeting transcript and update case intake data
+
+### Living Intake Document
+- Automatically generates/updates an "Intake Summary" document for each case
+- Document updates with each call or meeting data extraction
+- Found in the Documents section of each case
 
 ### UI Access
-- Communications Hub review mode shows "Extract Data" button on transcript card
-- "Extracted from Call" card displays all parsed data with green success styling
+- Communications Hub review mode shows "Extract Data" button for both calls and meetings
+- "Extracted Data" card displays all parsed data with green success styling
 - Checklist items auto-complete when their fieldMapping matches extracted data
 
 ## Recent Changes
+- 2026-02-02: Added meeting transcript extraction with living intake document
+- 2026-02-02: Extended intake schema with meeting-specific fields (cemetery, clothing, music, etc.)
 - 2026-02-02: Added AI transcript extraction with "Extract Data" button
 - 2026-02-02: Enhanced intake parser for Muslim/Jewish burial urgency detection
 - 2026-02-02: Added relationship to caller and religion fields to default checklist

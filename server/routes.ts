@@ -8,8 +8,34 @@ import { registerAudioRoutes } from "./replit_integrations/audio";
 import { registerImageRoutes } from "./replit_integrations/image";
 import { registerVapiRoutes } from "./vapi";
 import { setupDeepgramWebSocket } from "./deepgram";
-import { getFieldLabel, calculateMissingFields, validateIntakeData, parseCallTranscriptToIntake, mergeIntakeData } from "./intake-parser";
+import { getFieldLabel, calculateMissingFields, validateIntakeData, parseCallTranscriptToIntake, parseMeetingTranscriptToIntake, mergeIntakeData, generateIntakeDocument } from "./intake-parser";
 import { IntakeData, REQUIRED_INTAKE_FIELDS, intakeDataSchema, checklistTemplateItemsSchema, type ChecklistItem } from "@shared/schema";
+
+// Helper to create or update intake summary document
+async function updateIntakeDocument(caseId: number, caseData: any, intakeData: IntakeData) {
+  const content = generateIntakeDocument(caseData, intakeData);
+  
+  // Check if intake summary document already exists
+  const existingDocs = await storage.getDocumentsByCaseId(caseId);
+  const intakeDoc = existingDocs.find((d: any) => d.type === "intake_summary");
+  
+  if (intakeDoc) {
+    // Update existing document
+    await storage.updateDocument(intakeDoc.id, {
+      content,
+      status: "draft",
+    });
+  } else {
+    // Create new intake summary document
+    await storage.createDocument({
+      caseId,
+      type: "intake_summary",
+      title: "Intake Summary",
+      content,
+      status: "draft",
+    });
+  }
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -331,6 +357,12 @@ export async function registerRoutes(
           
           await storage.updateCase(call.caseId, updates);
           
+          // Generate and update intake document
+          const updatedCase = await storage.getCase(call.caseId);
+          if (updatedCase) {
+            await updateIntakeDocument(call.caseId, updatedCase, mergedIntake);
+          }
+          
           res.json({ 
             success: true, 
             message: "Call reprocessed and case updated",
@@ -365,6 +397,9 @@ export async function registerRoutes(
         // Link call to the new case
         await storage.updateCall(callId, { caseId: newCase.id });
         
+        // Create intake document for the new case
+        await updateIntakeDocument(newCase.id, newCase, intakeData);
+        
         res.json({ 
           success: true, 
           message: "Call reprocessed and new case created",
@@ -375,6 +410,82 @@ export async function registerRoutes(
     } catch (error: any) {
       console.error("Failed to reprocess call:", error);
       res.status(500).json({ message: "Failed to reprocess call transcript", error: error.message });
+    }
+  });
+
+  // Re-process meeting transcript to extract intake data
+  app.post("/api/meetings/:id/reprocess", async (req, res) => {
+    const meetingId = Number(req.params.id);
+    const meeting = await storage.getMeeting(meetingId);
+    
+    if (!meeting) {
+      return res.status(404).json({ message: "Meeting not found" });
+    }
+    
+    if (!meeting.transcript) {
+      return res.status(400).json({ message: "Meeting has no transcript to process" });
+    }
+    
+    try {
+      // Parse the meeting transcript to extract intake data
+      const actionItems = Array.isArray(meeting.actionItems) ? meeting.actionItems as string[] : [];
+      const intakeData = await parseMeetingTranscriptToIntake(
+        meeting.transcript, 
+        meeting.summary || undefined,
+        actionItems
+      );
+      const missingFields = calculateMissingFields(intakeData);
+      
+      if (meeting.caseId) {
+        // Update existing case with new intake data
+        const existingCase = await storage.getCase(meeting.caseId);
+        if (existingCase) {
+          const mergedIntake = mergeIntakeData(
+            (existingCase.intakeData as IntakeData) || {},
+            intakeData
+          );
+          const newMissingFields = calculateMissingFields(mergedIntake);
+          
+          const updates: any = {
+            intakeData: mergedIntake,
+            missingFields: newMissingFields,
+          };
+          
+          // Update deceased name if extracted and current is placeholder
+          if (intakeData.deceasedInfo?.fullName && 
+              (existingCase.deceasedName === "Unknown (Pending)" || !existingCase.deceasedName)) {
+            updates.deceasedName = intakeData.deceasedInfo.fullName;
+          }
+          
+          // Update religion if extracted
+          if (intakeData.servicePreferences?.religion && 
+              (existingCase.religion === "Unknown" || !existingCase.religion)) {
+            updates.religion = intakeData.servicePreferences.religion;
+          }
+          
+          await storage.updateCase(meeting.caseId, updates);
+          
+          // Generate and update intake document
+          const updatedCase = await storage.getCase(meeting.caseId);
+          if (updatedCase) {
+            await updateIntakeDocument(meeting.caseId, updatedCase, mergedIntake);
+          }
+          
+          res.json({ 
+            success: true, 
+            message: "Meeting reprocessed and case updated",
+            extractedData: intakeData,
+            caseId: meeting.caseId 
+          });
+        } else {
+          res.status(404).json({ message: "Linked case not found" });
+        }
+      } else {
+        res.status(400).json({ message: "Meeting is not linked to a case" });
+      }
+    } catch (error: any) {
+      console.error("Failed to reprocess meeting:", error);
+      res.status(500).json({ message: "Failed to reprocess meeting transcript", error: error.message });
     }
   });
 

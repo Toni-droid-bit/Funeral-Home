@@ -56,6 +56,14 @@ export const intakeDataSchema = z.object({
     subTradition: z.string().optional(), // e.g., Church of England, Catholic
     urgency: z.string().optional(), // normal, urgent-24hr
     serviceType: z.string().optional(), // full service, direct cremation, etc.
+    cemeteryOrCrematorium: z.string().optional(), // name of cemetery or crematorium
+    clothing: z.string().optional(), // clothing preferences
+    obituary: z.string().optional(), // obituary details
+    flowers: z.string().optional(), // flower preferences
+    music: z.string().optional(), // music selections
+    readings: z.string().optional(), // readings or poems
+    reception: z.string().optional(), // reception/wake details
+    donations: z.string().optional(), // charity donations info
   }).optional(),
   appointment: z.object({
     preferredDate: z.string().optional(),

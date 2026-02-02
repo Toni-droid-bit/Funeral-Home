@@ -162,6 +162,30 @@ export default function Communications() {
     },
   });
 
+  const reprocessMeetingMutation = useMutation({
+    mutationFn: async (meetingId: number) => {
+      return apiRequest("POST", `/api/meetings/${meetingId}/reprocess`, {});
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", selectedCaseId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases", selectedCaseId, "checklist"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/meetings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/documents"] });
+      toast({
+        title: "Meeting Reprocessed",
+        description: data.message || "Intake data has been extracted from the meeting transcript.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Reprocess Failed",
+        description: error?.message || "Could not extract data from transcript",
+        variant: "destructive",
+      });
+    },
+  });
+
   const isLoading = callsLoading || meetingsLoading;
 
   // Combine calls and meetings into unified timeline
@@ -362,6 +386,25 @@ export default function Communications() {
                   Extract Data
                 </Button>
               )}
+              {selectedItem?.type === "meeting" && (selectedItem.originalData as Meeting).id && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    const meetingId = (selectedItem.originalData as Meeting).id;
+                    reprocessMeetingMutation.mutate(meetingId);
+                  }}
+                  disabled={reprocessMeetingMutation.isPending}
+                  data-testid="button-reprocess-meeting"
+                >
+                  {reprocessMeetingMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : (
+                    <CheckCircle2 className="w-4 h-4 mr-2" />
+                  )}
+                  Extract Data
+                </Button>
+              )}
             </CardHeader>
             <CardContent>
               <textarea
@@ -377,16 +420,16 @@ export default function Communications() {
 
           {/* Extracted Data & Checklist */}
           <div className="space-y-4">
-            {/* Extracted Call Data - Only show for calls with intake data */}
-            {selectedItem?.type === "call" && selectedCase && isIntakeData(selectedCase.intakeData) && (
+            {/* Extracted Data - Show for calls or meetings with intake data */}
+            {selectedCase && isIntakeData(selectedCase.intakeData) && (
               <Card className="shadow-sm border-green-200 dark:border-green-800 bg-green-50/30 dark:bg-green-900/10">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg flex items-center gap-2 text-green-700 dark:text-green-400">
                     <CheckCircle2 className="w-5 h-5" />
-                    Extracted from Call
+                    Extracted Data
                   </CardTitle>
                   <p className="text-xs text-muted-foreground">
-                    AI-extracted information populating the checklist
+                    AI-extracted information from calls & meetings
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -446,13 +489,31 @@ export default function Communications() {
                       <span className="font-medium">{selectedCase.intakeData.deceasedInfo.currentLocation}</span>
                     </div>
                   )}
+                  {selectedCase.intakeData.servicePreferences?.cemeteryOrCrematorium && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Cemetery/Crematorium</span>
+                      <span className="font-medium">{selectedCase.intakeData.servicePreferences.cemeteryOrCrematorium}</span>
+                    </div>
+                  )}
+                  {selectedCase.intakeData.servicePreferences?.clothing && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Clothing</span>
+                      <span className="font-medium">{selectedCase.intakeData.servicePreferences.clothing}</span>
+                    </div>
+                  )}
+                  {selectedCase.intakeData.servicePreferences?.serviceType && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Service Type</span>
+                      <span className="font-medium">{selectedCase.intakeData.servicePreferences.serviceType}</span>
+                    </div>
+                  )}
                   
                   {/* Show message if no data extracted */}
                   {!selectedCase.intakeData.deceasedInfo?.fullName && 
                    !selectedCase.intakeData.callerInfo?.relationship && 
                    !selectedCase.intakeData.callerInfo?.phone && (
                     <p className="text-sm text-muted-foreground italic">
-                      No data extracted from this call yet. The transcript may still be processing.
+                      Click "Extract Data" to analyze the transcript.
                     </p>
                   )}
                 </CardContent>
