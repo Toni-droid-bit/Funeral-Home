@@ -269,6 +269,107 @@ export async function registerRoutes(
     res.json(stats);
   });
 
+  // Get computed checklist for a case (using default template)
+  app.get("/api/cases/:id/checklist", async (req, res) => {
+    const id = Number(req.params.id);
+    const caseItem = await storage.getCase(id);
+    if (!caseItem) {
+      return res.status(404).json({ message: "Case not found" });
+    }
+    
+    const template = await storage.getDefaultChecklistTemplate();
+    if (!template) {
+      return res.status(404).json({ message: "No default checklist template found" });
+    }
+    
+    const intakeData = (caseItem.intakeData as IntakeData) || {};
+    const completedItems = (caseItem.checklistCompletedItems as string[]) || [];
+    const items = template.items as ChecklistItem[];
+    
+    // Compute completion status for each item
+    const computedChecklist = items.map(item => {
+      let isCompleted = false;
+      
+      // Check if manually marked complete
+      if (completedItems.includes(item.id)) {
+        isCompleted = true;
+      }
+      // Check if auto-completed via fieldMapping
+      else if (item.fieldMapping) {
+        const value = item.fieldMapping.split('.').reduce((obj: any, key) => obj?.[key], intakeData);
+        isCompleted = Boolean(value);
+      }
+      
+      return {
+        ...item,
+        isCompleted,
+        isManuallyCompleted: completedItems.includes(item.id),
+      };
+    });
+    
+    const totalItems = computedChecklist.length;
+    const completedCount = computedChecklist.filter(i => i.isCompleted).length;
+    
+    res.json({
+      caseId: id,
+      templateId: template.id,
+      templateName: template.name,
+      items: computedChecklist,
+      completedCount,
+      totalItems,
+      completedPercentage: totalItems > 0 ? Math.round((completedCount / totalItems) * 100) : 0,
+    });
+  });
+
+  // Toggle checklist item completion for a case
+  app.post("/api/cases/:id/checklist/:itemId/toggle", async (req, res) => {
+    const caseId = Number(req.params.id);
+    const itemId = req.params.itemId;
+    
+    const caseItem = await storage.getCase(caseId);
+    if (!caseItem) {
+      return res.status(404).json({ message: "Case not found" });
+    }
+    
+    // Get template to verify item exists and check if it has fieldMapping
+    const template = await storage.getDefaultChecklistTemplate();
+    if (!template) {
+      return res.status(404).json({ message: "No default checklist template found" });
+    }
+    
+    const items = template.items as ChecklistItem[];
+    const item = items.find(i => i.id === itemId);
+    if (!item) {
+      return res.status(404).json({ message: "Checklist item not found" });
+    }
+    
+    // For items with fieldMapping, only allow manual marking as complete if intake field is empty
+    // For custom items (no fieldMapping), always allow toggling
+    const intakeData = (caseItem.intakeData as IntakeData) || {};
+    if (item.fieldMapping) {
+      const value = item.fieldMapping.split('.').reduce((obj: any, key) => obj?.[key], intakeData);
+      if (Boolean(value)) {
+        // Field already has data, don't allow manual override
+        return res.status(400).json({ 
+          message: "This item is auto-completed based on intake data and cannot be manually toggled" 
+        });
+      }
+    }
+    
+    const completedItems = (caseItem.checklistCompletedItems as string[]) || [];
+    let newCompletedItems: string[];
+    
+    if (completedItems.includes(itemId)) {
+      newCompletedItems = completedItems.filter(id => id !== itemId);
+    } else {
+      newCompletedItems = [...completedItems, itemId];
+    }
+    
+    await storage.updateCase(caseId, { checklistCompletedItems: newCompletedItems });
+    
+    res.json({ itemId, isCompleted: newCompletedItems.includes(itemId) });
+  });
+
   // Checklist Templates
   app.get("/api/checklist-templates", async (req, res) => {
     const templates = await storage.getChecklistTemplates();

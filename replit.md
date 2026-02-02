@@ -70,7 +70,33 @@ Set up webhook URL in Vapi dashboard to receive call events:
 - URL: `https://your-app.replit.app/api/vapi/webhook`
 - Events: end-of-call-report (for transcripts and summaries)
 
+## Checklist Templates
+Directors can customize intake checklists for arrangement meetings.
+
+### Features
+- Create custom checklist templates with questions organized by priority:
+  - **Critical**: Must have before family leaves (legal name, DOB, DOD, next of kin, service type, payment)
+  - **Important**: Should confirm during meeting (cemetery, clothing, obituary, flowers, music)
+  - **Supplementary**: Can follow up later (readings, photos, reception, donations)
+- Default template pre-populated with 18 standard funeral home questions
+- Questions can be mapped to intake data fields for auto-completion
+- Manual toggle for custom items without field mapping
+- Progress tracking with completion percentage per case
+
+### API Endpoints
+- `GET /api/checklist-templates` - List all templates
+- `GET /api/checklist-templates/default` - Get default template
+- `POST /api/checklist-templates` - Create new template
+- `PUT /api/checklist-templates/:id` - Update template
+- `GET /api/cases/:id/checklist` - Get computed checklist for a case
+- `POST /api/cases/:id/checklist/:itemId/toggle` - Toggle item completion
+
+### UI Access
+- Settings > Checklist Settings to manage templates
+- xScribe meeting review shows live checklist with toggle functionality
+
 ## Recent Changes
+- 2026-02-02: Added customizable checklist templates for directors
 - 2026-02-02: Added Vapi.ai integration for outbound AI phone calls
 - Created MakeCallDialog component for initiating calls
 - Added Vapi routes and hooks for phone number/assistant management

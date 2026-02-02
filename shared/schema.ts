@@ -29,6 +29,7 @@ export const cases = pgTable("cases", {
   notes: text("notes"),
   intakeData: jsonb("intake_data"), // Structured intake from xLink calls
   missingFields: jsonb("missing_fields"), // Array of fields still needing info
+  checklistCompletedItems: jsonb("checklist_completed_items"), // Array of completed checklist item IDs
   appointmentDate: timestamp("appointment_date"), // Scheduled arrangement meeting
   createdAt: timestamp("created_at").defaultNow(),
 });

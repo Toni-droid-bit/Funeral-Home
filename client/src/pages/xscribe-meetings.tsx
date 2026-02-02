@@ -126,11 +126,6 @@ export default function XScribeMeetings() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   
-  // Fetch the default checklist template
-  const { data: checklistTemplate } = useQuery<ChecklistTemplate>({
-    queryKey: ["/api/checklist-templates/default"],
-  });
-
   // State
   const [mode, setMode] = useState<Mode>("list");
   const [selectedCaseId, setSelectedCaseId] = useState("");
@@ -152,6 +147,49 @@ export default function XScribeMeetings() {
       return res.json();
     },
     enabled: !!selectedCaseId,
+  });
+
+  // Fetch the computed checklist for the selected case
+  interface ComputedChecklistItem extends ChecklistItem {
+    isCompleted: boolean;
+    isManuallyCompleted: boolean;
+  }
+  
+  interface ComputedChecklist {
+    caseId: number;
+    templateId: number;
+    templateName: string;
+    items: ComputedChecklistItem[];
+    completedCount: number;
+    totalItems: number;
+    completedPercentage: number;
+  }
+  
+  const { data: computedChecklist, refetch: refetchChecklist } = useQuery<ComputedChecklist | null>({
+    queryKey: ["/api/cases", selectedCaseId, "checklist"],
+    queryFn: async () => {
+      if (!selectedCaseId) return null;
+      const res = await fetch(`/api/cases/${selectedCaseId}/checklist`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!selectedCaseId && mode === "review",
+  });
+  
+  const toggleChecklistMutation = useMutation({
+    mutationFn: async (itemId: string) => {
+      return apiRequest("POST", `/api/cases/${selectedCaseId}/checklist/${itemId}/toggle`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/cases", selectedCaseId, "checklist"] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Cannot toggle item",
+        description: error?.message || "This item cannot be manually toggled",
+        variant: "destructive",
+      });
+    },
   });
 
   // Document generation mutation
@@ -761,51 +799,74 @@ export default function XScribeMeetings() {
             </CardContent>
           </Card>
 
-          {/* Custom Checklist */}
-          {checklistTemplate && (
+          {/* Computed Checklist with Toggle */}
+          {selectedCaseId && computedChecklist && (
             <Card className="shadow-sm h-fit max-h-[600px] overflow-y-auto">
               <CardContent className="p-4">
                 <h3 className="font-medium text-foreground mb-1 flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 text-amber-500" />
                   Meeting Checklist
                 </h3>
-                <p className="text-xs text-muted-foreground mb-3">{checklistTemplate.name}</p>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs text-muted-foreground">{computedChecklist.templateName}</p>
+                  <Badge variant="secondary" className="text-xs">
+                    {computedChecklist.completedCount}/{computedChecklist.totalItems}
+                  </Badge>
+                </div>
+                
+                {/* Progress bar */}
+                <div className="mb-4">
+                  <div className="w-full bg-muted rounded-full h-2">
+                    <div 
+                      className="bg-primary h-2 rounded-full transition-all" 
+                      style={{ width: `${computedChecklist.completedPercentage}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1 text-right">{computedChecklist.completedPercentage}% complete</p>
+                </div>
                 
                 {(["critical", "important", "supplementary"] as const).map(category => {
                   const config = CATEGORY_CONFIG[category];
-                  const items = (checklistTemplate.items as ChecklistItem[]).filter(i => i.category === category);
+                  const items = computedChecklist.items.filter(i => i.category === category);
                   if (items.length === 0) return null;
+                  
+                  const completedInCategory = items.filter(i => i.isCompleted).length;
                   
                   return (
                     <div key={category} className="mb-4">
-                      <h4 className={`text-xs font-medium uppercase tracking-wider mb-2 ${config.color}`}>
-                        {config.label} ({items.length})
+                      <h4 className={`text-xs font-medium uppercase tracking-wider mb-2 flex items-center justify-between ${config.color}`}>
+                        <span>{config.label}</span>
+                        <span className="text-muted-foreground">{completedInCategory}/{items.length}</span>
                       </h4>
                       <div className="space-y-1">
                         {items.map(item => {
-                          const isCompleted = item.fieldMapping && intakeData?.intakeData 
-                            ? getNestedValue(intakeData.intakeData, item.fieldMapping) 
-                            : false;
+                          const isAutoCompleted = item.fieldMapping && item.isCompleted && !item.isManuallyCompleted;
+                          const canToggle = !isAutoCompleted;
                           
                           return (
-                            <div 
+                            <button 
                               key={item.id}
-                              className={`flex items-start gap-2 p-2 rounded text-sm ${
-                                isCompleted 
+                              onClick={() => canToggle && toggleChecklistMutation.mutate(item.id)}
+                              disabled={toggleChecklistMutation.isPending || !canToggle}
+                              className={`flex items-start gap-2 p-2 rounded text-sm w-full text-left transition-colors ${
+                                item.isCompleted 
                                   ? "bg-green-50 dark:bg-green-900/20" 
-                                  : config.bgColor
-                              }`}
+                                  : `${config.bgColor}`
+                              } ${canToggle ? "hover:opacity-80 cursor-pointer" : "cursor-default"}`}
                               data-testid={`checklist-item-${item.id}`}
                             >
-                              {isCompleted ? (
+                              {item.isCompleted ? (
                                 <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
                               ) : (
-                                <div className={`w-4 h-4 border rounded flex-shrink-0 mt-0.5 ${config.iconColor} border-current`} />
+                                <div className={`w-4 h-4 border-2 rounded flex-shrink-0 mt-0.5 ${config.iconColor} border-current`} />
                               )}
-                              <span className={isCompleted ? "text-green-700 dark:text-green-300" : "text-foreground"}>
+                              <span className={`flex-1 ${item.isCompleted ? "text-green-700 dark:text-green-300" : "text-foreground"}`}>
                                 {item.question}
                               </span>
-                            </div>
+                              {isAutoCompleted && (
+                                <span className="text-xs text-muted-foreground">(auto)</span>
+                              )}
+                            </button>
                           );
                         })}
                       </div>
