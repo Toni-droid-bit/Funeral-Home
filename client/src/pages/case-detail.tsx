@@ -167,11 +167,11 @@ export default function CaseDetail() {
               <TabsTrigger value="checklist" className="gap-2" data-testid="tab-checklist">
                 <ClipboardList className="w-4 h-4" /> Checklist
               </TabsTrigger>
-              <TabsTrigger value="xlink" className="gap-2" data-testid="tab-xlink">
-                <Phone className="w-4 h-4" /> xLink Calls
+              <TabsTrigger value="xlink" className="gap-2" data-testid="tab-calls">
+                <Phone className="w-4 h-4" /> Calls
               </TabsTrigger>
-              <TabsTrigger value="xscribe" className="gap-2" data-testid="tab-xscribe">
-                <Mic className="w-4 h-4" /> xScribe
+              <TabsTrigger value="xscribe" className="gap-2" data-testid="tab-meetings">
+                <Mic className="w-4 h-4" /> Meetings
               </TabsTrigger>
               <TabsTrigger value="docs" className="gap-2" data-testid="tab-docs">
                 <FileText className="w-4 h-4" /> Documents

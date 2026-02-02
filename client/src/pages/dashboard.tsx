@@ -108,15 +108,15 @@ export default function Dashboard() {
 
       {/* Recent Activity Section */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Recent Calls (xLink) */}
+        {/* Recent Calls */}
         <motion.div variants={item}>
           <Card className="h-full shadow-md border-border/60">
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
-                <CardTitle className="font-display text-xl">Recent xLink Calls</CardTitle>
+                <CardTitle className="font-display text-xl">Recent Calls</CardTitle>
                 <CardDescription>AI-handled reception calls</CardDescription>
               </div>
-              <Link href="/calls">
+              <Link href="/communications">
                 <Button variant="ghost" size="sm" className="gap-2 text-primary hover:text-primary/80">
                   View All <ArrowRight className="w-4 h-4" />
                 </Button>
@@ -151,15 +151,15 @@ export default function Dashboard() {
           </Card>
         </motion.div>
 
-        {/* Recent Meetings (xScribe) */}
+        {/* Recent Meetings */}
         <motion.div variants={item}>
           <Card className="h-full shadow-md border-border/60">
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
-                <CardTitle className="font-display text-xl">Recent xScribe Meetings</CardTitle>
+                <CardTitle className="font-display text-xl">Recent Meetings</CardTitle>
                 <CardDescription>Arrangement transcripts & summaries</CardDescription>
               </div>
-              <Link href="/meetings">
+              <Link href="/communications">
                 <Button variant="ghost" size="sm" className="gap-2 text-primary hover:text-primary/80">
                   View All <ArrowRight className="w-4 h-4" />
                 </Button>
