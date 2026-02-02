@@ -19,34 +19,46 @@ export async function parseCallTranscriptToIntake(
   transcript: string,
   summary?: string
 ): Promise<IntakeData> {
-  const prompt = `You are analyzing a phone call transcript from a funeral home intake call. Extract structured information from the conversation.
+  const prompt = `You are analyzing a phone call transcript from a funeral home intake call. This is critical for building a case profile.
+
+PRIORITY INFORMATION TO EXTRACT (First Call Essentials):
+1. Name of the deceased (who passed away)
+2. Caller's relationship to the deceased (son, daughter, spouse, sibling, etc.)
+3. When did they die (date of death)
+4. Caller's contact phone number
+5. Religion - especially important for Muslim or Jewish as they require urgent 24-hour burial
 
 TRANSCRIPT:
 ${transcript}
 
 ${summary ? `SUMMARY:\n${summary}` : ""}
 
-Extract the following information if mentioned. Return ONLY a valid JSON object with this structure (use null for missing fields):
+Extract ALL mentioned information. Pay special attention to:
+- Any mention of Muslim, Islam, Islamic, Jewish, or similar religious references
+- Any mention of urgency, quick burial, 24-hour burial, or religious requirements
+- The caller identifying themselves (e.g., "I'm calling about my father" means relationship is son/daughter)
+
+Return ONLY a valid JSON object with this structure (use null for fields not mentioned):
 {
   "callerInfo": {
     "name": "caller's full name or null",
-    "phone": "phone number or null",
-    "relationship": "relationship to deceased (e.g., spouse, son, daughter) or null",
+    "phone": "phone number or null (extract from transcript if caller provides it)",
+    "relationship": "relationship to deceased (e.g., spouse, son, daughter, brother, sister, friend) or null",
     "email": "email address or null"
   },
   "deceasedInfo": {
     "fullName": "deceased person's full name or null",
-    "dateOfDeath": "date of death in YYYY-MM-DD format or null",
+    "dateOfDeath": "date of death in YYYY-MM-DD format or null (if they say 'today', 'yesterday', 'this morning', estimate)",
     "dateOfBirth": "date of birth in YYYY-MM-DD format or null",
     "age": numeric age or null,
-    "currentLocation": "where the body is (hospital, home, care home, coroner) or null",
+    "currentLocation": "where the body is (hospital, home, care home, coroner, hospice) or null",
     "causeOfDeath": "cause of death if mentioned or null"
   },
   "servicePreferences": {
-    "burialOrCremation": "burial, cremation, or undecided or null",
-    "religion": "religion or belief system or null",
+    "burialOrCremation": "burial (default for Muslim/Jewish), cremation, or undecided or null",
+    "religion": "religion or belief system (Muslim, Jewish, Christian, Catholic, Hindu, Sikh, Secular, etc.) or null",
     "subTradition": "specific denomination if mentioned or null",
-    "urgency": "normal or urgent-24hr (use urgent-24hr for Muslim/Jewish) or null",
+    "urgency": "urgent-24hr (for Muslim or Jewish) or normal or null - IMPORTANT: always set to urgent-24hr if Muslim or Jewish is mentioned",
     "serviceType": "full service, direct cremation, memorial, etc. or null"
   },
   "appointment": {

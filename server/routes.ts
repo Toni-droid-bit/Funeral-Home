@@ -8,7 +8,7 @@ import { registerAudioRoutes } from "./replit_integrations/audio";
 import { registerImageRoutes } from "./replit_integrations/image";
 import { registerVapiRoutes } from "./vapi";
 import { setupDeepgramWebSocket } from "./deepgram";
-import { getFieldLabel, calculateMissingFields, validateIntakeData } from "./intake-parser";
+import { getFieldLabel, calculateMissingFields, validateIntakeData, parseCallTranscriptToIntake, mergeIntakeData } from "./intake-parser";
 import { IntakeData, REQUIRED_INTAKE_FIELDS, intakeDataSchema, checklistTemplateItemsSchema, type ChecklistItem } from "@shared/schema";
 
 export async function registerRoutes(
@@ -281,6 +281,101 @@ export async function registerRoutes(
   app.get(api.dashboard.stats.path, async (req, res) => {
     const stats = await storage.getDashboardStats();
     res.json(stats);
+  });
+
+  // Re-process call transcript to extract intake data
+  app.post("/api/calls/:id/reprocess", async (req, res) => {
+    const callId = Number(req.params.id);
+    const call = await storage.getCall(callId);
+    
+    if (!call) {
+      return res.status(404).json({ message: "Call not found" });
+    }
+    
+    if (!call.transcript) {
+      return res.status(400).json({ message: "Call has no transcript to process" });
+    }
+    
+    try {
+      // Parse the transcript to extract intake data
+      const intakeData = await parseCallTranscriptToIntake(call.transcript, call.summary || undefined);
+      const missingFields = calculateMissingFields(intakeData);
+      
+      if (call.caseId) {
+        // Update existing case with new intake data
+        const existingCase = await storage.getCase(call.caseId);
+        if (existingCase) {
+          const mergedIntake = mergeIntakeData(
+            (existingCase.intakeData as IntakeData) || {},
+            intakeData
+          );
+          const newMissingFields = calculateMissingFields(mergedIntake);
+          
+          // Update case name if we extracted a better name
+          const updates: any = {
+            intakeData: mergedIntake,
+            missingFields: newMissingFields,
+          };
+          
+          // Update deceased name if extracted and current is placeholder
+          if (intakeData.deceasedInfo?.fullName && 
+              (existingCase.deceasedName === "Unknown (Pending)" || !existingCase.deceasedName)) {
+            updates.deceasedName = intakeData.deceasedInfo.fullName;
+          }
+          
+          // Update religion if extracted
+          if (intakeData.servicePreferences?.religion && 
+              (existingCase.religion === "Unknown" || !existingCase.religion)) {
+            updates.religion = intakeData.servicePreferences.religion;
+          }
+          
+          await storage.updateCase(call.caseId, updates);
+          
+          res.json({ 
+            success: true, 
+            message: "Call reprocessed and case updated",
+            extractedData: intakeData,
+            caseId: call.caseId 
+          });
+        } else {
+          res.status(404).json({ message: "Linked case not found" });
+        }
+      } else {
+        // Create a new case from the call
+        const deceasedName = intakeData.deceasedInfo?.fullName || "Unknown (Pending)";
+        const religion = intakeData.servicePreferences?.religion || "Unknown";
+        
+        const homes = await storage.getFuneralHomes();
+        const defaultHomeId = homes[0]?.id || null;
+        
+        const newCase = await storage.createCase({
+          deceasedName,
+          dateOfDeath: intakeData.deceasedInfo?.dateOfDeath 
+            ? new Date(intakeData.deceasedInfo.dateOfDeath) 
+            : null,
+          status: "active",
+          religion,
+          language: call.detectedLanguage || "English",
+          funeralHomeId: defaultHomeId,
+          notes: `Created from call reprocessing. Caller: ${intakeData.callerInfo?.name || call.callerName || "Unknown"} (${intakeData.callerInfo?.relationship || "Unknown relationship"})`,
+          intakeData,
+          missingFields,
+        });
+        
+        // Link call to the new case
+        await storage.updateCall(callId, { caseId: newCase.id });
+        
+        res.json({ 
+          success: true, 
+          message: "Call reprocessed and new case created",
+          extractedData: intakeData,
+          caseId: newCase.id 
+        });
+      }
+    } catch (error: any) {
+      console.error("Failed to reprocess call:", error);
+      res.status(500).json({ message: "Failed to reprocess call transcript", error: error.message });
+    }
   });
 
   // Get computed checklist for a case (using default template)
