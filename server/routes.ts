@@ -7,6 +7,7 @@ import { setupAuth, registerAuthRoutes } from "./replit_integrations/auth";
 import { registerAudioRoutes } from "./replit_integrations/audio";
 import { registerImageRoutes } from "./replit_integrations/image";
 import { registerVapiRoutes } from "./vapi";
+import { setupDeepgramWebSocket } from "./deepgram";
 
 export async function registerRoutes(
   httpServer: Server,
