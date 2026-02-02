@@ -6,6 +6,7 @@ import { z } from "zod";
 import { setupAuth, registerAuthRoutes } from "./replit_integrations/auth";
 import { registerAudioRoutes } from "./replit_integrations/audio";
 import { registerImageRoutes } from "./replit_integrations/image";
+import { registerVapiRoutes } from "./vapi";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -18,6 +19,9 @@ export async function registerRoutes(
   // AI Integrations
   registerAudioRoutes(app);
   registerImageRoutes(app);
+  
+  // Vapi.ai Voice Calling
+  registerVapiRoutes(app);
 
   // === API ROUTES ===
 

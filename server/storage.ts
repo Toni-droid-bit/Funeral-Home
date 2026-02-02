@@ -31,6 +31,7 @@ export interface IStorage {
   getCall(id: number): Promise<Call | undefined>;
   getCallsByCaseId(caseId: number): Promise<Call[]>;
   createCall(data: InsertCall): Promise<Call>;
+  updateCall(id: number, data: Partial<InsertCall>): Promise<Call>;
 
   // Meetings (xScribe)
   getMeetings(): Promise<Meeting[]>;
@@ -111,6 +112,11 @@ export class DatabaseStorage implements IStorage {
 
   async createCall(data: InsertCall): Promise<Call> {
     const [c] = await db.insert(calls).values(data).returning();
+    return c;
+  }
+
+  async updateCall(id: number, data: Partial<InsertCall>): Promise<Call> {
+    const [c] = await db.update(calls).set(data).where(eq(calls.id, id)).returning();
     return c;
   }
 
