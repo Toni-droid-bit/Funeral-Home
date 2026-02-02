@@ -1,0 +1,119 @@
+4.1 Flow A: Family Calls After Hours (xLink)
+
+Trigger: Family member calls funeral home at 11:30pm
+Actor: Grieving family member (James)
+Goal: Get immediate support and book an appointment
+
+Steps:
+Step
+Actor
+Action
+System Response
+1
+James
+Dials funeral home number
+xLink answers within 2 rings
+2
+xLink
+Greets caller warmly
+"Thank you for calling Mitchell Family Funeral Home. My name is Alex, and I'm here to help you during this difficult time. May I ask who I'm speaking with?"
+3
+James
+"This is James Thompson. My mother just passed away."
+xLink detects grief/urgency, adjusts tone
+4
+xLink
+Expresses condolences
+"I'm so sorry for your loss, James. Please know that we're here to support you. Take your time, and let me help you through this."
+5
+xLink
+Begins gentle information gathering
+"May I ask your mother's name?"
+6
+James
+Provides mother's name
+xLink captures: Deceased Name
+7
+xLink
+Continues conversation
+Captures: relationship, contact info, location of deceased, service preferences, religious requirements, urgency level
+8
+xLink
+Offers appointment
+"I'd like to arrange a time for you to meet with Sarah, our funeral director. She has availability tomorrow at 10am or 2pm. Which would work better for you?"
+9
+James
+Selects time
+xLink books appointment in Sarah's calendar
+10
+xLink
+Confirms and closes
+"I've booked you for 10am tomorrow with Sarah. You'll receive a text confirmation shortly. Is there anything else I can help with tonight?"
+11
+System
+Post-call
+Creates case record, sends confirmation to James, notifies Sarah via app/email
+ 
+
+Success Criteria:
+• Call answered within 2 rings
+• Caller feels heard and supported
+• Key information captured (see data requirements below)
+• Appointment booked successfully
+• Confirmation sent to caller
+• Director notified with full case summary
+4.2 Flow B: Complex Call with Escalation (xLink)
+
+Trigger: Family member asks question xLink cannot answer
+Actor: Family member with complex requirements
+Goal: Capture information and arrange callback
+
+Example Scenarios Requiring Escalation:
+• Specific pricing questions ("How much for a mahogany casket?")
+• Complex legal situations ("My brother and I disagree on arrangements")
+• International repatriation questions
+• Caller explicitly requests human
+• Highly specific religious/cultural questions outside AI's training
+Escalation Response:
+"That's a really important question, and I want to make sure you get the most accurate answer. Let me arrange for Sarah, our funeral director, to call you back. She'll be able to help you with the specifics. What's the best number to reach you, and when would be a good time for her to call?"
+
+System Actions:
+• Captures callback number and preferred time
+• Records the specific question asked
+• Creates urgent callback task for director
+• Includes call recording/transcript for context
+4.3 Flow C: Director Conducts Meeting (xScribe)
+
+Trigger: Family arrives for arrangement meeting
+Actor: Funeral Director (Sarah)
+Goal: Capture complete arrangement details, generate documentation
+
+Pre-Meeting (Director):
+18. Director opens xFunerals app on tablet/phone
+19. Navigates to today's appointments
+20. Reviews case summary (pre-populated from xLink call)
+21. Notes key details: mother's name, son James is primary contact, Church of England
+Meeting Start:
+22. Director greets family, seats them in arrangement room
+23. Director explains xScribe: "To make sure we capture everything accurately and don't miss any details, I use a recording assistant. This helps me focus completely on you rather than taking notes. Is that okay with you?"
+24. Family gives verbal consent
+25. Director taps "Start Recording" in app
+26. App shows recording indicator and consent timestamp
+During Meeting:
+• Director conducts natural conversation
+• xScribe records audio continuously
+• Real-time transcription runs in background
+• Director can glance at app to see key data being extracted
+Meeting End:
+27. Director taps "End Recording"
+28. xScribe processes recording (15-30 seconds)
+29. Pop-up appears: "Missing Information Checklist"
+30. Director reviews with family: "Before we finish, let me just confirm a few details..."
+31. Director verbally fills gaps (xScribe captures these too)
+32. Director taps "Complete Meeting"
+33. xScribe generates documents in background
+Post-Meeting:
+• Within 2 minutes: All documents available in dashboard
+• Director reviews, makes minor edits if needed
+• Sends contract to family for signature
+• Total admin time: 5-10 minutes (vs. 4-6 hours manually)

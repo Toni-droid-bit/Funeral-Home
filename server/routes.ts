@@ -82,6 +82,20 @@ export async function registerRoutes(
     }
   });
 
+  // Get calls for a specific case
+  app.get("/api/cases/:id/calls", async (req, res) => {
+    const id = Number(req.params.id);
+    const calls = await storage.getCallsByCaseId(id);
+    res.json(calls);
+  });
+
+  // Get meetings for a specific case
+  app.get("/api/cases/:id/meetings", async (req, res) => {
+    const id = Number(req.params.id);
+    const meetings = await storage.getMeetingsByCaseId(id);
+    res.json(meetings);
+  });
+
   // Case intake data and checklist
   app.get("/api/cases/:id/intake", async (req, res) => {
     const id = Number(req.params.id);

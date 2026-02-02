@@ -1060,6 +1060,13 @@ export default function XScribeMeetings() {
                       variant="outline"
                       size="sm"
                       className="w-full justify-start gap-2"
+                      onClick={() => {
+                        setEditableTranscript(meeting.transcript || "");
+                        setSelectedCaseId(meeting.caseId?.toString() || "");
+                        setDirectorName(meeting.directorName || "");
+                        setMode("review");
+                      }}
+                      data-testid={`button-review-meeting-${meeting.id}`}
                     >
                       <FileText className="w-4 h-4" /> Full Transcript
                     </Button>
