@@ -1,12 +1,15 @@
 # Funeral Home Management System
 
 ## Overview
-A comprehensive funeral home management system with AI-powered phone handling (xLink) and meeting transcription (xScribe). Built with React, Express, and PostgreSQL.
+A comprehensive funeral home management system with unified Communications Hub for AI phone calls and meeting transcription. Built with React, Express, and PostgreSQL.
 
 ## Current Features
 - **Case Management**: Create and manage funeral cases with deceased details, religion, language preferences
-- **xLink AI Calls**: AI-powered phone call handling with Vapi.ai integration
-- **xScribe Meetings**: Meeting transcription and summary generation
+- **Communications Hub**: Unified platform combining AI phone calls (Vapi.ai) and meeting transcription
+  - Unified timeline of all calls and meetings sorted by date
+  - "Action Required" section for cases needing attention
+  - Quick start recording with case selection
+  - Review mode with transcript and checklist integration
 - **Dashboard**: Overview of active cases, pending calls, and upcoming meetings
 - **Replit Auth**: User authentication via Replit's OAuth system
 
@@ -24,7 +27,7 @@ client/
 ├── src/
 │   ├── components/    # UI components including make-call-dialog
 │   ├── hooks/         # React Query hooks for data fetching
-│   ├── pages/         # Page components (dashboard, cases, calls, meetings)
+│   ├── pages/         # Page components (dashboard, cases, communications)
 │   └── lib/           # Utility functions
 server/
 ├── routes.ts          # API route definitions
@@ -51,7 +54,7 @@ The system uses Vapi.ai for AI-powered outbound phone calls.
 - `POST /api/vapi/webhook` - Webhook endpoint for call events
 
 ### Making Calls
-1. Go to the xLink Calls page
+1. Go to the Communications Hub
 2. Click "Make Call" button
 3. Select your Vapi phone number (must be configured in Vapi dashboard)
 4. Enter the destination phone number
@@ -93,9 +96,10 @@ Directors can customize intake checklists for arrangement meetings.
 
 ### UI Access
 - Settings > Checklist Settings to manage templates
-- xScribe meeting review shows live checklist with toggle functionality
+- Communications Hub review mode shows live checklist with toggle functionality
 
 ## Recent Changes
+- 2026-02-02: Merged xLink and xScribe into unified Communications Hub
 - 2026-02-02: Added customizable checklist templates for directors
 - 2026-02-02: Added Vapi.ai integration for outbound AI phone calls
 - Created MakeCallDialog component for initiating calls
