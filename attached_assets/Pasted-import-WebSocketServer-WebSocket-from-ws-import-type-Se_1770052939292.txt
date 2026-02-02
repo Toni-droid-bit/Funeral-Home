@@ -148,3 +148,8 @@ export function setupDeepgramWebSocket(httpServer: Server) {
 
   console.log('xScribe: Live transcription WebSocket ready on /ws/deepgram');
 }
+```
+
+**Step 3:** Make sure `ws` is installed — in Shell run:
+```
+npm install ws @types/ws
