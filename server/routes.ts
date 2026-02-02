@@ -24,6 +24,9 @@ export async function registerRoutes(
   // Vapi.ai Voice Calling
   registerVapiRoutes(app);
 
+  // Deepgram WebSocket for real-time audio
+  setupDeepgramWebSocket(httpServer);
+
   // === API ROUTES ===
 
   // Cases
