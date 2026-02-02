@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -76,14 +76,24 @@ const LANGUAGES = [
 
 export default function Communications() {
   const [mode, setMode] = useState<Mode>("hub");
-    const [selectedCaseId, setSelectedCaseId] = useState<string>("");
+  const [selectedCaseId, setSelectedCaseId] = useState<string>("");
   const [selectedItem, setSelectedItem] = useState<CommunicationItem | null>(null);
   const [directorName, setDirectorName] = useState("");
   const [language, setLanguage] = useState("en");
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [editableTranscript, setEditableTranscript] = useState("");
+  const [liveTranscript, setLiveTranscript] = useState("");
+  const [isConnecting, setIsConnecting] = useState(false);
   const { toast } = useToast();
+
+  // Audio recording refs
+  const wsRef = useRef<WebSocket | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const recordingTimerRef = useRef<number | null>(null);
 
   const { data: calls = [], isLoading: callsLoading } = useQuery<Call[]>({
     queryKey: ["/api/calls"],
@@ -224,7 +234,41 @@ export default function Communications() {
     return hasCalls && !hasCompletedMeeting;
   });
 
-  const handleStartRecording = () => {
+  // Cleanup function for audio resources
+  const cleanupAudio = useCallback(() => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+      processorRef.current = null;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (wsRef.current) {
+      if (wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'stop' }));
+      }
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      cleanupAudio();
+    };
+  }, [cleanupAudio]);
+
+  const handleStartRecording = async () => {
     if (!selectedCaseId) {
       toast({
         title: "Select a case",
@@ -233,15 +277,132 @@ export default function Communications() {
       });
       return;
     }
+
+    setIsConnecting(true);
+    setLiveTranscript("");
     setMode("recording");
-    setIsRecording(true);
-    setRecordingTime(0);
+
+    try {
+      // Request microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          sampleRate: 16000,
+        }
+      });
+      streamRef.current = stream;
+
+      // Create WebSocket connection to Deepgram proxy
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws/deepgram`);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        console.log('WebSocket connected, starting transcription...');
+        ws.send(JSON.stringify({ type: 'start', language }));
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'ready') {
+          console.log('Deepgram ready, starting audio capture');
+          setIsConnecting(false);
+          setIsRecording(true);
+          
+          // Start recording timer
+          recordingTimerRef.current = window.setInterval(() => {
+            setRecordingTime(prev => prev + 1);
+          }, 1000);
+
+          // Set up audio processing
+          const audioContext = new AudioContext({ sampleRate: 16000 });
+          audioContextRef.current = audioContext;
+          
+          const source = audioContext.createMediaStreamSource(stream);
+          const processor = audioContext.createScriptProcessor(4096, 1, 1);
+          processorRef.current = processor;
+
+          processor.onaudioprocess = (e) => {
+            if (ws.readyState === WebSocket.OPEN) {
+              const inputData = e.inputBuffer.getChannelData(0);
+              const pcm16 = new Int16Array(inputData.length);
+              for (let i = 0; i < inputData.length; i++) {
+                const s = Math.max(-1, Math.min(1, inputData[i]));
+                pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+              }
+              ws.send(pcm16.buffer);
+            }
+          };
+
+          source.connect(processor);
+          processor.connect(audioContext.destination);
+        }
+
+        if (data.type === 'transcript') {
+          if (data.speechFinal && data.isFinal) {
+            setLiveTranscript(data.fullTranscript);
+          }
+        }
+
+        if (data.type === 'stopped') {
+          setEditableTranscript(data.fullTranscript || liveTranscript);
+        }
+
+        if (data.type === 'error') {
+          console.error('Transcription error:', data.message);
+          toast({
+            title: "Transcription Error",
+            description: data.message,
+            variant: "destructive",
+          });
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        setIsConnecting(false);
+        toast({
+          title: "Connection Error",
+          description: "Failed to connect to transcription service",
+          variant: "destructive",
+        });
+        cleanupAudio();
+        setMode("hub");
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket closed');
+      };
+
+    } catch (error: any) {
+      console.error('Error starting recording:', error);
+      setIsConnecting(false);
+      toast({
+        title: "Microphone Error",
+        description: error.message || "Failed to access microphone",
+        variant: "destructive",
+      });
+      setMode("hub");
+    }
   };
 
   const handleStopRecording = () => {
+    // Send stop message to get final transcript
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'stop' }));
+    }
+    
+    // Use live transcript if we have it
+    const finalTranscript = liveTranscript || "No transcript captured";
+    setEditableTranscript(finalTranscript);
+    
+    // Cleanup
+    cleanupAudio();
     setIsRecording(false);
+    setIsConnecting(false);
     setMode("review");
-    setEditableTranscript("Meeting transcript will appear here after processing...");
   };
 
   const handleReviewItem = (item: CommunicationItem) => {
@@ -261,11 +422,14 @@ export default function Communications() {
   };
 
   const resetToHub = () => {
+    cleanupAudio();
     setMode("hub");
     setSelectedItem(null);
     setSelectedCaseId("");
     setEditableTranscript("");
+    setLiveTranscript("");
     setIsRecording(false);
+    setIsConnecting(false);
     setRecordingTime(0);
   };
 
@@ -298,43 +462,82 @@ export default function Communications() {
           </div>
         </div>
 
-        <Card className="max-w-2xl mx-auto">
-          <CardContent className="p-8 text-center">
-            <div className={`w-32 h-32 mx-auto rounded-full flex items-center justify-center mb-6 ${
-              isRecording ? "bg-red-100 dark:bg-red-900/30 animate-pulse" : "bg-muted"
-            }`}>
-              <Mic className={`w-16 h-16 ${isRecording ? "text-red-600" : "text-muted-foreground"}`} />
-            </div>
-            
-            <div className="text-4xl font-mono mb-6">
-              {Math.floor(recordingTime / 60).toString().padStart(2, "0")}:
-              {(recordingTime % 60).toString().padStart(2, "0")}
-            </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card>
+            <CardContent className="p-8 text-center">
+              <div className={`w-32 h-32 mx-auto rounded-full flex items-center justify-center mb-6 ${
+                isRecording ? "bg-red-100 dark:bg-red-900/30 animate-pulse" : 
+                isConnecting ? "bg-amber-100 dark:bg-amber-900/30 animate-pulse" : "bg-muted"
+              }`}>
+                {isConnecting ? (
+                  <Loader2 className="w-16 h-16 text-amber-600 animate-spin" />
+                ) : (
+                  <Mic className={`w-16 h-16 ${isRecording ? "text-red-600" : "text-muted-foreground"}`} />
+                )}
+              </div>
+              
+              <div className="text-4xl font-mono mb-6">
+                {Math.floor(recordingTime / 60).toString().padStart(2, "0")}:
+                {(recordingTime % 60).toString().padStart(2, "0")}
+              </div>
 
-            <Button
-              size="lg"
-              variant={isRecording ? "destructive" : "default"}
-              onClick={isRecording ? handleStopRecording : handleStartRecording}
-              className="gap-2"
-            >
-              {isRecording ? (
-                <>
-                  <Square className="w-5 h-5" /> Stop Recording
-                </>
-              ) : (
-                <>
-                  <Play className="w-5 h-5" /> Start Recording
-                </>
-              )}
-            </Button>
+              <Button
+                size="lg"
+                variant={isRecording ? "destructive" : "default"}
+                onClick={isRecording ? handleStopRecording : undefined}
+                disabled={isConnecting || !isRecording}
+                className="gap-2"
+                data-testid="button-stop-recording"
+              >
+                {isConnecting ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" /> Connecting...
+                  </>
+                ) : isRecording ? (
+                  <>
+                    <Square className="w-5 h-5" /> Stop Recording
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-5 h-5" /> Starting...
+                  </>
+                )}
+              </Button>
 
-            <p className="text-sm text-muted-foreground mt-4">
-              {isRecording 
-                ? "Recording in progress. Click stop when the meeting ends."
-                : "Click to begin recording the arrangement meeting."}
-            </p>
-          </CardContent>
-        </Card>
+              <p className="text-sm text-muted-foreground mt-4">
+                {isConnecting 
+                  ? "Connecting to transcription service..."
+                  : isRecording 
+                    ? "Recording in progress. Click stop when the meeting ends."
+                    : "Initializing microphone..."}
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <FileText className="w-5 h-5" />
+                Live Transcript
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="min-h-[300px] max-h-[400px] overflow-y-auto p-4 bg-muted/50 rounded-md">
+                {liveTranscript ? (
+                  <p className="text-sm whitespace-pre-wrap">{liveTranscript}</p>
+                ) : (
+                  <p className="text-sm text-muted-foreground italic">
+                    {isConnecting 
+                      ? "Waiting for connection..."
+                      : isRecording 
+                        ? "Listening... speak to see transcription appear here."
+                        : "Transcript will appear here during recording."}
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   }
