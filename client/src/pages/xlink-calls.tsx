@@ -2,7 +2,7 @@ import { useCalls } from "@/hooks/use-calls";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { PlayCircle, FileText, Phone, PhoneOutgoing, PhoneIncoming } from "lucide-react";
+import { PlayCircle, FileText, Phone, PhoneOutgoing, FolderOpen, CheckCircle2, Link2 } from "lucide-react";
 import { format } from "date-fns";
 import { StatusBadge } from "@/components/status-badge";
 import { MakeCallDialog } from "@/components/make-call-dialog";
@@ -14,9 +14,17 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "wouter";
 
 export default function XLinkCalls() {
   const { data: calls, isLoading } = useCalls();
+  const { data: cases } = useQuery<any[]>({ queryKey: ["/api/cases"] });
+
+  const getCaseForCall = (caseId: number | null) => {
+    if (!caseId || !cases) return null;
+    return cases.find(c => c.id === caseId);
+  };
 
   return (
     <div className="space-y-8">
@@ -97,6 +105,22 @@ export default function XLinkCalls() {
                       }`}>
                         {call.sentiment}
                       </span>
+                    </div>
+                  )}
+
+                  {/* Case Link Status */}
+                  {call.caseId && getCaseForCall(call.caseId) && (
+                    <div className="flex items-center gap-2 mt-2 p-2 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+                      <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400" />
+                      <span className="text-sm text-green-700 dark:text-green-300">
+                        Case created: <strong>{getCaseForCall(call.caseId)?.deceasedName}</strong>
+                      </span>
+                      <Link href={`/cases/${call.caseId}`}>
+                        <Button variant="ghost" size="sm" className="ml-auto h-7 text-xs gap-1" data-testid={`button-view-case-${call.id}`}>
+                          <FolderOpen className="w-3 h-3" />
+                          View Case
+                        </Button>
+                      </Link>
                     </div>
                   )}
                 </div>

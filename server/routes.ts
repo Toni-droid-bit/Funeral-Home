@@ -8,6 +8,8 @@ import { registerAudioRoutes } from "./replit_integrations/audio";
 import { registerImageRoutes } from "./replit_integrations/image";
 import { registerVapiRoutes } from "./vapi";
 import { setupDeepgramWebSocket } from "./deepgram";
+import { getFieldLabel, calculateMissingFields, validateIntakeData } from "./intake-parser";
+import { IntakeData, REQUIRED_INTAKE_FIELDS, intakeDataSchema } from "@shared/schema";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -78,6 +80,116 @@ export async function registerRoutes(
       }
       throw err;
     }
+  });
+
+  // Case intake data and checklist
+  app.get("/api/cases/:id/intake", async (req, res) => {
+    const id = Number(req.params.id);
+    const caseItem = await storage.getCase(id);
+    if (!caseItem) {
+      return res.status(404).json({ message: "Case not found" });
+    }
+    
+    // Fetch related calls to show call history
+    const calls = await storage.getCallsByCaseId(id);
+    
+    const intakeData = (caseItem.intakeData as IntakeData) || {};
+    const missingFields = (caseItem.missingFields as string[]) || calculateMissingFields(intakeData);
+    
+    // Create labeled checklist
+    const checklist = REQUIRED_INTAKE_FIELDS.map((field) => ({
+      field,
+      label: getFieldLabel(field),
+      completed: !missingFields.includes(field),
+    }));
+    
+    res.json({
+      caseId: caseItem.id,
+      deceasedName: caseItem.deceasedName,
+      intakeData,
+      missingFields,
+      checklist,
+      completedPercentage: Math.round(((REQUIRED_INTAKE_FIELDS.length - missingFields.length) / REQUIRED_INTAKE_FIELDS.length) * 100),
+      calls: calls.map(c => ({
+        id: c.id,
+        callerPhone: c.callerPhone,
+        callerName: c.callerName,
+        summary: c.summary,
+        createdAt: c.createdAt,
+      })),
+    });
+  });
+
+  // Update case intake data (from xScribe meeting or manual entry)
+  app.patch("/api/cases/:id/intake", async (req, res) => {
+    const id = Number(req.params.id);
+    const caseItem = await storage.getCase(id);
+    if (!caseItem) {
+      return res.status(404).json({ message: "Case not found" });
+    }
+    
+    // Validate incoming intake data
+    const { intakeData: newIntakeData } = req.body;
+    const validatedNewData = validateIntakeData(newIntakeData || {});
+    const existingIntake = (caseItem.intakeData as IntakeData) || {};
+    
+    // Deep merge new data with existing
+    const merged = {
+      callerInfo: { ...existingIntake.callerInfo, ...validatedNewData.callerInfo },
+      deceasedInfo: { ...existingIntake.deceasedInfo, ...validatedNewData.deceasedInfo },
+      servicePreferences: { ...existingIntake.servicePreferences, ...validatedNewData.servicePreferences },
+      appointment: { ...existingIntake.appointment, ...validatedNewData.appointment },
+    };
+    
+    const missingFields = calculateMissingFields(merged);
+    
+    const updated = await storage.updateCase(id, {
+      intakeData: merged,
+      missingFields,
+    });
+    
+    res.json(updated);
+  });
+
+  // Generate documents from meeting transcript
+  const generateDocsSchema = z.object({
+    meetingId: z.number().optional(),
+    documentTypes: z.array(z.enum(["contract", "obituary", "service_program", "eulogy"])).optional(),
+  });
+
+  app.post("/api/cases/:id/generate-documents", async (req, res) => {
+    const id = Number(req.params.id);
+    const caseItem = await storage.getCase(id);
+    if (!caseItem) {
+      return res.status(404).json({ message: "Case not found" });
+    }
+    
+    // Validate request body
+    const parseResult = generateDocsSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ message: parseResult.error.errors[0].message });
+    }
+    
+    const { meetingId, documentTypes } = parseResult.data;
+    
+    const generatedDocs: any[] = [];
+    
+    for (const docType of documentTypes || ["contract"]) {
+      const doc = await storage.createDocument({
+        caseId: id,
+        type: docType,
+        title: `${docType.charAt(0).toUpperCase() + docType.slice(1).replace("_", " ")} - ${caseItem.deceasedName}`,
+        content: `[Document generation placeholder for ${docType}. This would use AI to generate based on case intake data and meeting transcript.]`,
+        language: caseItem.language || "English",
+        status: "draft",
+      });
+      generatedDocs.push(doc);
+    }
+    
+    res.status(201).json({
+      message: "Documents generated successfully",
+      documents: generatedDocs,
+    });
   });
 
   // Calls

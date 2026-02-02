@@ -1,6 +1,7 @@
 import { VapiClient } from "@vapi-ai/server-sdk";
 import type { Express, Request, Response } from "express";
 import { storage } from "../storage";
+import { parseCallTranscriptToIntake, calculateMissingFields, mergeIntakeData } from "../intake-parser";
 
 const vapiClient = new VapiClient({
   token: process.env.VAPI_API_KEY || "",
@@ -256,6 +257,66 @@ export function registerVapiRoutes(app: Express) {
             console.log(`Updated call ${localCall.id} from Vapi webhook`);
           } else {
             console.log(`No local call found for Vapi call ID: ${vapiCallId}`);
+          }
+          
+          // Parse transcript to extract structured intake data and create/update case
+          if (localCall && transcript && callType === "inboundPhoneCall") {
+            try {
+              console.log(`Parsing call transcript for intake data...`);
+              const intakeData = await parseCallTranscriptToIntake(transcript, summary || undefined);
+              const missingFields = calculateMissingFields(intakeData);
+              
+              // Check if call already linked to a case
+              if (localCall.caseId) {
+                // Update existing case with new intake data
+                const existingCase = await storage.getCase(localCall.caseId);
+                if (existingCase) {
+                  const mergedIntake = mergeIntakeData(
+                    (existingCase.intakeData as any) || {},
+                    intakeData
+                  );
+                  const newMissingFields = calculateMissingFields(mergedIntake);
+                  
+                  await storage.updateCase(localCall.caseId, {
+                    intakeData: mergedIntake,
+                    missingFields: newMissingFields,
+                  });
+                  console.log(`Updated case ${localCall.caseId} with intake data from call`);
+                }
+              } else {
+                // Create new case from intake data
+                const deceasedName = intakeData.deceasedInfo?.fullName || "Unknown (Pending)";
+                const religion = intakeData.servicePreferences?.religion || "Unknown";
+                const language = "English"; // Could detect from transcript
+                
+                // Get default funeral home
+                const homes = await storage.getFuneralHomes();
+                const defaultHomeId = homes[0]?.id || null;
+                
+                const newCase = await storage.createCase({
+                  deceasedName,
+                  dateOfDeath: intakeData.deceasedInfo?.dateOfDeath 
+                    ? new Date(intakeData.deceasedInfo.dateOfDeath) 
+                    : null,
+                  status: "active",
+                  religion,
+                  language,
+                  funeralHomeId: defaultHomeId,
+                  notes: `Auto-created from xLink call. Caller: ${intakeData.callerInfo?.name || customerName || "Unknown"} (${intakeData.callerInfo?.relationship || "Unknown relationship"})`,
+                  intakeData,
+                  missingFields,
+                });
+                
+                // Link call to the new case
+                await storage.updateCall(localCall.id, {
+                  caseId: newCase.id,
+                });
+                
+                console.log(`Created new case ${newCase.id} from call intake data`);
+              }
+            } catch (parseError) {
+              console.error("Failed to parse call intake:", parseError);
+            }
           }
         }
       }

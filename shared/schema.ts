@@ -27,8 +27,55 @@ export const cases = pgTable("cases", {
   language: text("language").default("English"), // Family's preferred language
   funeralHomeId: integer("funeral_home_id").references(() => funeralHomes.id),
   notes: text("notes"),
+  intakeData: jsonb("intake_data"), // Structured intake from xLink calls
+  missingFields: jsonb("missing_fields"), // Array of fields still needing info
+  appointmentDate: timestamp("appointment_date"), // Scheduled arrangement meeting
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+// Intake data structure for type safety
+export const intakeDataSchema = z.object({
+  callerInfo: z.object({
+    name: z.string().optional(),
+    phone: z.string().optional(),
+    relationship: z.string().optional(),
+    email: z.string().optional(),
+  }).optional(),
+  deceasedInfo: z.object({
+    fullName: z.string().optional(),
+    dateOfDeath: z.string().optional(),
+    dateOfBirth: z.string().optional(),
+    age: z.number().optional(),
+    currentLocation: z.string().optional(), // hospital, home, coroner, etc.
+    causeOfDeath: z.string().optional(),
+  }).optional(),
+  servicePreferences: z.object({
+    burialOrCremation: z.string().optional(), // burial, cremation, undecided
+    religion: z.string().optional(),
+    subTradition: z.string().optional(), // e.g., Church of England, Catholic
+    urgency: z.string().optional(), // normal, urgent-24hr
+    serviceType: z.string().optional(), // full service, direct cremation, etc.
+  }).optional(),
+  appointment: z.object({
+    preferredDate: z.string().optional(),
+    preferredTime: z.string().optional(),
+    attendeeCount: z.number().optional(),
+  }).optional(),
+});
+
+export type IntakeData = z.infer<typeof intakeDataSchema>;
+
+// Required fields checklist
+export const REQUIRED_INTAKE_FIELDS = [
+  "callerInfo.name",
+  "callerInfo.phone",
+  "callerInfo.relationship",
+  "deceasedInfo.fullName",
+  "deceasedInfo.dateOfDeath",
+  "deceasedInfo.currentLocation",
+  "servicePreferences.burialOrCremation",
+  "servicePreferences.religion",
+] as const;
 
 export const calls = pgTable("calls", {
   id: serial("id").primaryKey(),

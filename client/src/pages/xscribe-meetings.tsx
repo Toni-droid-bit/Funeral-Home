@@ -14,10 +14,18 @@ import {
   CheckCircle2,
   Play,
   Trash2,
+  AlertCircle,
+  Phone,
+  User,
+  Calendar,
+  MapPin,
+  Heart,
+  FilePlus,
 } from "lucide-react";
 import { format } from "date-fns";
 import { StatusBadge } from "@/components/status-badge";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 
 // ── Audio Helpers ──
 
@@ -84,6 +92,35 @@ export default function XScribeMeetings() {
   const [editableTranscript, setEditableTranscript] = useState("");
   const [recordingTime, setRecordingTime] = useState(0);
   const [isConnecting, setIsConnecting] = useState(false);
+
+  // Fetch intake data when case is selected
+  const { data: intakeData } = useQuery({
+    queryKey: ["/api/cases", selectedCaseId, "intake"],
+    queryFn: async () => {
+      if (!selectedCaseId) return null;
+      const res = await fetch(`/api/cases/${selectedCaseId}/intake`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!selectedCaseId,
+  });
+
+  // Document generation mutation
+  const generateDocsMutation = useMutation({
+    mutationFn: async (caseId: number) => {
+      return apiRequest(`/api/cases/${caseId}/generate-documents`, {
+        method: "POST",
+        body: JSON.stringify({ documentTypes: ["contract", "obituary", "service_program"] }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+      toast({
+        title: "Documents generated",
+        description: "Draft documents have been created and linked to the case.",
+      });
+    },
+  });
 
   // Refs
   const wsRef = useRef<WebSocket | null>(null);
@@ -374,6 +411,7 @@ export default function XScribeMeetings() {
                 value={selectedCaseId}
                 onChange={(e) => setSelectedCaseId(e.target.value)}
                 className="w-full border border-input rounded-md p-2.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                data-testid="select-case"
               >
                 <option value="">No case selected</option>
                 {cases?.map((c: any) => (
@@ -383,6 +421,70 @@ export default function XScribeMeetings() {
                 ))}
               </select>
             </div>
+
+            {/* Pre-filled data from xLink (when case is selected) */}
+            {intakeData && (
+              <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 space-y-3">
+                <div className="flex items-center gap-2 text-primary font-medium text-sm">
+                  <Phone className="w-4 h-4" />
+                  <span>Pre-filled from xLink Call</span>
+                  <Badge variant="outline" className="ml-auto text-xs">
+                    {intakeData.completedPercentage}% Complete
+                  </Badge>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  {intakeData.intakeData?.callerInfo?.name && (
+                    <div className="flex items-start gap-2">
+                      <User className="w-4 h-4 mt-0.5 text-muted-foreground" />
+                      <div>
+                        <p className="text-xs text-muted-foreground">Caller</p>
+                        <p className="font-medium">{intakeData.intakeData.callerInfo.name}</p>
+                        {intakeData.intakeData.callerInfo.relationship && (
+                          <p className="text-xs text-muted-foreground">{intakeData.intakeData.callerInfo.relationship}</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {intakeData.intakeData?.deceasedInfo?.fullName && (
+                    <div className="flex items-start gap-2">
+                      <Heart className="w-4 h-4 mt-0.5 text-muted-foreground" />
+                      <div>
+                        <p className="text-xs text-muted-foreground">Deceased</p>
+                        <p className="font-medium">{intakeData.intakeData.deceasedInfo.fullName}</p>
+                      </div>
+                    </div>
+                  )}
+                  {intakeData.intakeData?.servicePreferences?.religion && (
+                    <div className="flex items-start gap-2">
+                      <Calendar className="w-4 h-4 mt-0.5 text-muted-foreground" />
+                      <div>
+                        <p className="text-xs text-muted-foreground">Religion</p>
+                        <p className="font-medium">{intakeData.intakeData.servicePreferences.religion}</p>
+                      </div>
+                    </div>
+                  )}
+                  {intakeData.intakeData?.servicePreferences?.burialOrCremation && (
+                    <div className="flex items-start gap-2">
+                      <MapPin className="w-4 h-4 mt-0.5 text-muted-foreground" />
+                      <div>
+                        <p className="text-xs text-muted-foreground">Preference</p>
+                        <p className="font-medium capitalize">{intakeData.intakeData.servicePreferences.burialOrCremation}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {intakeData.missingFields?.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-primary/10">
+                    <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      {intakeData.missingFields.length} required field(s) still needed
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Director Name */}
             <div>
@@ -590,31 +692,80 @@ export default function XScribeMeetings() {
           )}
         </div>
 
-        {/* Editable transcript */}
-        <Card className="shadow-sm">
-          <CardContent className="p-6">
-            <label className="block text-sm font-medium text-foreground mb-2">
-              Transcript{" "}
-              <span className="text-muted-foreground font-normal">
-                — you can edit before saving
-              </span>
-            </label>
-            <textarea
-              value={editableTranscript}
-              onChange={(e) => setEditableTranscript(e.target.value)}
-              rows={16}
-              className="w-full border border-input rounded-md p-4 text-sm bg-background font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-ring resize-y"
-              placeholder="No transcript was captured..."
-            />
-          </CardContent>
-        </Card>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Editable transcript */}
+          <Card className="shadow-sm lg:col-span-2">
+            <CardContent className="p-6">
+              <label className="block text-sm font-medium text-foreground mb-2">
+                Transcript{" "}
+                <span className="text-muted-foreground font-normal">
+                  — you can edit before saving
+                </span>
+              </label>
+              <textarea
+                value={editableTranscript}
+                onChange={(e) => setEditableTranscript(e.target.value)}
+                rows={16}
+                className="w-full border border-input rounded-md p-4 text-sm bg-background font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-ring resize-y"
+                placeholder="No transcript was captured..."
+                data-testid="textarea-transcript"
+              />
+            </CardContent>
+          </Card>
+
+          {/* Missing Info Checklist */}
+          {selectedCaseId && intakeData && (
+            <Card className="shadow-sm h-fit">
+              <CardContent className="p-4">
+                <h3 className="font-medium text-foreground mb-3 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-500" />
+                  Information Checklist
+                </h3>
+                <div className="space-y-2">
+                  {intakeData.checklist?.map((item: any) => (
+                    <div 
+                      key={item.field} 
+                      className={`flex items-center gap-2 p-2 rounded text-sm ${
+                        item.completed 
+                          ? "bg-green-50 dark:bg-green-900/20" 
+                          : "bg-amber-50 dark:bg-amber-900/20"
+                      }`}
+                    >
+                      {item.completed ? (
+                        <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                      )}
+                      <span className={item.completed ? "text-green-700 dark:text-green-300" : "text-amber-700 dark:text-amber-300"}>
+                        {item.label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-4 pt-3 border-t">
+                  <div className="flex items-center justify-between text-sm mb-2">
+                    <span className="text-muted-foreground">Completion</span>
+                    <span className="font-medium">{intakeData.completedPercentage}%</span>
+                  </div>
+                  <div className="w-full bg-muted rounded-full h-2">
+                    <div 
+                      className="bg-primary h-2 rounded-full transition-all" 
+                      style={{ width: `${intakeData.completedPercentage}%` }}
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
 
         {/* Action buttons */}
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <Button
             onClick={handleSave}
             disabled={saveMutation.isPending || !editableTranscript.trim()}
             className="bg-primary text-white px-8 py-5"
+            data-testid="button-save-meeting"
           >
             {saveMutation.isPending ? (
               <>
@@ -626,6 +777,26 @@ export default function XScribeMeetings() {
               </>
             )}
           </Button>
+
+          {selectedCaseId && (
+            <Button
+              variant="outline"
+              onClick={() => generateDocsMutation.mutate(parseInt(selectedCaseId))}
+              disabled={generateDocsMutation.isPending || !editableTranscript.trim()}
+              className="px-6 py-5"
+              data-testid="button-generate-docs"
+            >
+              {generateDocsMutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generating...
+                </>
+              ) : (
+                <>
+                  <FilePlus className="w-4 h-4 mr-2" /> Generate Documents
+                </>
+              )}
+            </Button>
+          )}
 
           <Button
             variant="outline"
