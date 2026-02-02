@@ -384,6 +384,126 @@ export async function registerRoutes(
     res.json({ itemId, isCompleted: newCompletedItems.includes(itemId) });
   });
 
+  // Generate Intake Summary Document
+  app.post("/api/cases/:id/generate-intake-summary", async (req, res) => {
+    const caseId = Number(req.params.id);
+    
+    const caseItem = await storage.getCase(caseId);
+    if (!caseItem) {
+      return res.status(404).json({ message: "Case not found" });
+    }
+    
+    const intakeData = (caseItem.intakeData as IntakeData) || {};
+    const template = await storage.getDefaultChecklistTemplate();
+    const items = (template?.items as ChecklistItem[]) || [];
+    const completedItems = (caseItem.checklistCompletedItems as string[]) || [];
+    
+    // Build the intake summary document content
+    const sections: string[] = [];
+    
+    // Header
+    sections.push(`# Intake Summary: ${caseItem.deceasedName}`);
+    sections.push(`**Case ID:** ${caseItem.id}`);
+    sections.push(`**Generated:** ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`);
+    sections.push(`**Status:** ${caseItem.status}`);
+    sections.push('');
+    
+    // Deceased Information
+    sections.push('## Deceased Information');
+    sections.push(`- **Full Legal Name:** ${intakeData.deceasedInfo?.fullName || caseItem.deceasedName || 'Not provided'}`);
+    sections.push(`- **Date of Birth:** ${intakeData.deceasedInfo?.dateOfBirth || 'Not provided'}`);
+    sections.push(`- **Date of Death:** ${caseItem.dateOfDeath ? new Date(caseItem.dateOfDeath).toLocaleDateString() : (intakeData.deceasedInfo?.dateOfDeath || 'Not provided')}`);
+    sections.push(`- **Current Location:** ${intakeData.deceasedInfo?.currentLocation || 'Not provided'}`);
+    sections.push(`- **Religion:** ${caseItem.religion || 'Not specified'}`);
+    sections.push(`- **Language:** ${caseItem.language || 'English'}`);
+    sections.push('');
+    
+    // Next of Kin / Contact Information
+    sections.push('## Contact Information');
+    sections.push(`- **Primary Contact:** ${intakeData.callerInfo?.name || 'Not provided'}`);
+    sections.push(`- **Phone:** ${intakeData.callerInfo?.phone || 'Not provided'}`);
+    sections.push(`- **Relationship:** ${intakeData.callerInfo?.relationship || 'Not provided'}`);
+    sections.push(`- **Email:** ${intakeData.callerInfo?.email || 'Not provided'}`);
+    sections.push('');
+    
+    // Service Preferences
+    sections.push('## Service Preferences');
+    sections.push(`- **Service Type:** ${intakeData.servicePreferences?.serviceType || 'Not specified'}`);
+    sections.push(`- **Burial or Cremation:** ${intakeData.servicePreferences?.burialOrCremation || 'Not specified'}`);
+    sections.push(`- **Religion:** ${intakeData.servicePreferences?.religion || 'Not specified'}`);
+    sections.push(`- **Urgency:** ${intakeData.servicePreferences?.urgency || 'Not specified'}`);
+    sections.push('');
+    
+    // Checklist Status
+    const completedCount = items.filter(item => {
+      if (completedItems.includes(item.id)) return true;
+      if (item.fieldMapping) {
+        const value = item.fieldMapping.split('.').reduce((obj: any, key) => obj?.[key], intakeData);
+        return Boolean(value);
+      }
+      return false;
+    }).length;
+    
+    sections.push('## Checklist Progress');
+    sections.push(`**Completed:** ${completedCount} of ${items.length} items (${items.length > 0 ? Math.round((completedCount / items.length) * 100) : 0}%)`);
+    sections.push('');
+    
+    // Group items by category
+    const categoryGroups = { critical: [] as string[], important: [] as string[], supplementary: [] as string[] };
+    
+    items.forEach(item => {
+      let isCompleted = completedItems.includes(item.id);
+      if (!isCompleted && item.fieldMapping) {
+        const value = item.fieldMapping.split('.').reduce((obj: any, key) => obj?.[key], intakeData);
+        isCompleted = Boolean(value);
+      }
+      
+      const status = isCompleted ? '[x]' : '[ ]';
+      const line = `${status} ${item.question}`;
+      
+      if (item.category === 'critical') categoryGroups.critical.push(line);
+      else if (item.category === 'important') categoryGroups.important.push(line);
+      else categoryGroups.supplementary.push(line);
+    });
+    
+    if (categoryGroups.critical.length > 0) {
+      sections.push('### Critical Items');
+      sections.push(...categoryGroups.critical);
+      sections.push('');
+    }
+    
+    if (categoryGroups.important.length > 0) {
+      sections.push('### Important Items');
+      sections.push(...categoryGroups.important);
+      sections.push('');
+    }
+    
+    if (categoryGroups.supplementary.length > 0) {
+      sections.push('### Supplementary Items');
+      sections.push(...categoryGroups.supplementary);
+      sections.push('');
+    }
+    
+    // Additional Notes
+    if (caseItem.notes) {
+      sections.push('## Additional Notes');
+      sections.push(caseItem.notes);
+      sections.push('');
+    }
+    
+    const content = sections.join('\n');
+    
+    // Create the document in the database
+    const document = await storage.createDocument({
+      caseId,
+      type: 'intake_summary',
+      title: `Intake Summary - ${caseItem.deceasedName}`,
+      content,
+    });
+    
+    res.status(201).json(document);
+  });
+
   // Checklist Templates
   app.get("/api/checklist-templates", async (req, res) => {
     const templates = await storage.getChecklistTemplates();

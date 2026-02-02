@@ -43,7 +43,11 @@ export const api = {
       method: 'GET' as const,
       path: '/api/cases/:id',
       responses: {
-        200: z.custom<typeof cases.$inferSelect>(), // Extended with relations in implementation
+        200: z.custom<typeof cases.$inferSelect & { 
+          calls?: (typeof calls.$inferSelect)[],
+          meetings?: (typeof meetings.$inferSelect)[],
+          documents?: (typeof documents.$inferSelect)[]
+        }>(),
         404: errorSchemas.notFound,
       },
     },

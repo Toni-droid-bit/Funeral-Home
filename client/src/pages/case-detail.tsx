@@ -12,7 +12,20 @@ import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Call, Meeting } from "@shared/schema";
+import type { Call, Meeting, Document } from "@shared/schema";
+
+interface CaseWithRelations {
+  id: number;
+  deceasedName: string;
+  dateOfDeath: Date | null;
+  status: string;
+  religion: string | null;
+  language: string | null;
+  notes: string | null;
+  intakeData: any;
+  createdAt: Date | null;
+  documents?: Document[];
+}
 
 interface ChecklistItemWithStatus {
   id: string;
@@ -33,7 +46,7 @@ interface ComputedChecklist {
 export default function CaseDetail() {
   const { id } = useParams();
   const caseId = Number(id);
-  const { data: caseData, isLoading } = useCase(caseId);
+  const { data: caseData, isLoading } = useCase(caseId) as { data: CaseWithRelations | null | undefined, isLoading: boolean };
   const { toast } = useToast();
 
   const { data: calls = [] } = useQuery<Call[]>({
@@ -77,6 +90,27 @@ export default function CaseDetail() {
       toast({
         title: "Cannot toggle item",
         description: error?.message || "This item cannot be manually toggled",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const generateSummaryMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest("POST", `/api/cases/${caseId}/generate-intake-summary`, {});
+    },
+    onSuccess: () => {
+      // Invalidate the case detail query to refresh documents
+      queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", caseId] });
+      toast({
+        title: "Document Generated",
+        description: "Intake summary has been created successfully.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to generate document",
+        description: error?.message || "Could not generate intake summary",
         variant: "destructive",
       });
     },
@@ -182,11 +216,28 @@ export default function CaseDetail() {
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between gap-2">
                   <CardTitle className="text-lg">Intake Checklist</CardTitle>
-                  {checklist && (
-                    <span className="text-sm text-muted-foreground">
-                      {checklist.completedCount}/{checklist.totalItems} complete
-                    </span>
-                  )}
+                  <div className="flex items-center gap-3">
+                    {checklist && (
+                      <span className="text-sm text-muted-foreground">
+                        {checklist.completedCount}/{checklist.totalItems} complete
+                      </span>
+                    )}
+                    {checklist && checklist.completedPercentage === 100 && (
+                      <Button
+                        size="sm"
+                        onClick={() => generateSummaryMutation.mutate()}
+                        disabled={generateSummaryMutation.isPending}
+                        data-testid="button-generate-summary"
+                      >
+                        {generateSummaryMutation.isPending ? (
+                          <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                        ) : (
+                          <FileText className="w-4 h-4 mr-2" />
+                        )}
+                        Generate Summary
+                      </Button>
+                    )}
+                  </div>
                 </CardHeader>
                 <CardContent>
                   {checklist && (
@@ -323,14 +374,54 @@ export default function CaseDetail() {
 
             <TabsContent value="docs" className="mt-4">
               <Card>
-                <CardHeader>
+                <CardHeader className="flex flex-row items-center justify-between gap-2">
                   <CardTitle className="text-lg">Generated Documents</CardTitle>
+                  <Button
+                    size="sm"
+                    onClick={() => generateSummaryMutation.mutate()}
+                    disabled={generateSummaryMutation.isPending}
+                    data-testid="button-generate-summary-docs"
+                  >
+                    {generateSummaryMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    ) : (
+                      <FileText className="w-4 h-4 mr-2" />
+                    )}
+                    Generate Summary
+                  </Button>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-center py-8 text-muted-foreground">
-                    <FileText className="w-12 h-12 mx-auto opacity-20 mb-3" />
-                    <p>No documents generated yet.</p>
-                  </div>
+                  {caseData.documents && caseData.documents.length > 0 ? (
+                    <div className="space-y-3">
+                      {caseData.documents.map((doc: any) => (
+                        <div key={doc.id} className="p-4 rounded-lg bg-muted/30 border" data-testid={`document-item-${doc.id}`}>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-start gap-3">
+                              <FileText className="w-5 h-5 text-primary mt-0.5" />
+                              <div>
+                                <p className="font-medium">{doc.title}</p>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  {doc.type === 'intake_summary' ? 'Intake Summary' : doc.type}
+                                  {doc.createdAt && ` • ${format(new Date(doc.createdAt), "MMM d, yyyy h:mm a")}`}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                          {doc.content && (
+                            <div className="mt-3 p-3 bg-background rounded border text-sm whitespace-pre-wrap max-h-64 overflow-y-auto">
+                              {doc.content}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <FileText className="w-12 h-12 mx-auto opacity-20 mb-3" />
+                      <p>No documents generated yet.</p>
+                      <p className="text-sm mt-2">Use the "Generate Summary" button to create an intake summary.</p>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>
