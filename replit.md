@@ -98,7 +98,26 @@ Directors can customize intake checklists for arrangement meetings.
 - Settings > Checklist Settings to manage templates
 - Communications Hub review mode shows live checklist with toggle functionality
 
+## AI Transcript Extraction
+The system uses OpenAI to automatically extract intake data from call transcripts.
+
+### Extracted Fields
+- **First Call Essentials**: Deceased name, relationship to caller, date of death, contact number
+- **Service Preferences**: Religion, burial preference, urgency level, location preference
+- **Automatic Urgency**: Muslim/Jewish cases auto-set to "urgent-24hr" for 24-hour burial requirements
+
+### API Endpoints
+- `POST /api/calls/:id/reprocess` - Re-parse call transcript and update case intake data
+
+### UI Access
+- Communications Hub review mode shows "Extract Data" button on transcript card
+- "Extracted from Call" card displays all parsed data with green success styling
+- Checklist items auto-complete when their fieldMapping matches extracted data
+
 ## Recent Changes
+- 2026-02-02: Added AI transcript extraction with "Extract Data" button
+- 2026-02-02: Enhanced intake parser for Muslim/Jewish burial urgency detection
+- 2026-02-02: Added relationship to caller and religion fields to default checklist
 - 2026-02-02: Merged xLink and xScribe into unified Communications Hub
 - 2026-02-02: Added customizable checklist templates for directors
 - 2026-02-02: Added Vapi.ai integration for outbound AI phone calls
