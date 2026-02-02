@@ -86,7 +86,7 @@ export function registerVapiRoutes(app: Express) {
         };
       }
 
-      const vapiCall = await vapiClient.calls.create(callConfig);
+      const vapiCall = await vapiClient.calls.create(callConfig) as any;
 
       const newCall = await storage.createCall({
         vapiCallId: vapiCall.id,
@@ -117,7 +117,8 @@ export function registerVapiRoutes(app: Express) {
 
   app.get("/api/vapi/calls/:id", async (req: Request, res: Response) => {
     try {
-      const call = await vapiClient.calls.get(req.params.id);
+      const callId = req.params.id as string;
+      const call = await vapiClient.calls.get(callId as any);
       res.json(call);
     } catch (error: any) {
       console.error("Error fetching call:", error);

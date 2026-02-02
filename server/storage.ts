@@ -1,6 +1,6 @@
 import { 
   users, cases, calls, meetings, documents, funeralHomes,
-  type User, type InsertUser,
+  type User, type UpsertUser,
   type Case, type InsertCase, type UpdateCaseRequest,
   type Call, type InsertCall,
   type Meeting, type InsertMeeting,
@@ -14,7 +14,7 @@ export interface IStorage {
   // Users (Auth handled by replit auth integrations mostly, but useful to have)
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  createUser(user: UpsertUser): Promise<User>;
 
   // Funeral Homes
   getFuneralHomes(): Promise<FuneralHome[]>;
@@ -62,7 +62,7 @@ export class DatabaseStorage implements IStorage {
     return undefined; 
   }
 
-  async createUser(user: InsertUser): Promise<User> {
+  async createUser(user: UpsertUser): Promise<User> {
     const [newUser] = await db.insert(users).values(user).returning();
     return newUser;
   }
