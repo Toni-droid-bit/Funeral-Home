@@ -148,14 +148,105 @@ export function registerVapiRoutes(app: Express) {
       
       console.log("Vapi webhook received:", message?.type);
       
+      // Handle assistant started - create local call record for inbound calls
+      if (message?.type === "assistant-message" || message?.type === "conversation-update") {
+        const vapiCallId = message?.call?.id;
+        const callType = message?.call?.type;
+        const customerNumber = message?.call?.customer?.number;
+        const customerName = message?.call?.customer?.name;
+        
+        if (vapiCallId && callType === "inboundPhoneCall") {
+          // Check if we already have a record for this call
+          const existingCall = await storage.getCallByVapiId(vapiCallId);
+          
+          if (!existingCall) {
+            // Create a new local call record for this inbound call
+            await storage.createCall({
+              vapiCallId: vapiCallId,
+              callerPhone: customerNumber || "Unknown",
+              callerName: customerName || null,
+              caseId: null,
+              status: "in-progress",
+              direction: "inbound",
+              detectedLanguage: "English",
+              transcript: null,
+              summary: null,
+              sentiment: null,
+              audioUrl: null,
+            });
+            console.log(`Created local call record for inbound Vapi call: ${vapiCallId}`);
+          }
+        }
+      }
+      
+      // Handle status-update with "in-progress" to catch inbound calls early
+      if (message?.type === "status-update") {
+        const vapiCallId = message?.call?.id;
+        const status = message?.status;
+        const callType = message?.call?.type;
+        const customerNumber = message?.call?.customer?.number;
+        const customerName = message?.call?.customer?.name;
+        
+        // Create record for inbound calls when they start
+        if (vapiCallId && status === "in-progress" && callType === "inboundPhoneCall") {
+          const existingCall = await storage.getCallByVapiId(vapiCallId);
+          
+          if (!existingCall) {
+            await storage.createCall({
+              vapiCallId: vapiCallId,
+              callerPhone: customerNumber || "Unknown",
+              callerName: customerName || null,
+              caseId: null,
+              status: "in-progress",
+              direction: "inbound",
+              detectedLanguage: "English",
+              transcript: null,
+              summary: null,
+              sentiment: null,
+              audioUrl: null,
+            });
+            console.log(`Created local call record for inbound Vapi call: ${vapiCallId}`);
+          }
+        }
+        
+        // Handle call ended status
+        if (vapiCallId && status === "ended") {
+          const localCall = await storage.getCallByVapiId(vapiCallId);
+          if (localCall && localCall.status === "in-progress") {
+            await storage.updateCall(localCall.id, {
+              status: "completed",
+            });
+          }
+        }
+      }
+      
       if (message?.type === "end-of-call-report") {
         const { call, transcript, summary, recordingUrl } = message;
         const vapiCallId = call?.id;
+        const customerNumber = call?.customer?.number;
+        const customerName = call?.customer?.name;
+        const callType = call?.type;
         
         if (vapiCallId) {
-          const localCall = await storage.getCallByVapiId(vapiCallId);
+          let localCall = await storage.getCallByVapiId(vapiCallId);
           
-          if (localCall) {
+          // If no local call exists (e.g., inbound call we didn't catch earlier), create one
+          if (!localCall && callType === "inboundPhoneCall") {
+            localCall = await storage.createCall({
+              vapiCallId: vapiCallId,
+              callerPhone: customerNumber || "Unknown",
+              callerName: customerName || null,
+              caseId: null,
+              status: "completed",
+              direction: "inbound",
+              detectedLanguage: "English",
+              transcript: transcript || null,
+              summary: summary || null,
+              sentiment: null,
+              audioUrl: recordingUrl || null,
+            });
+            console.log(`Created and completed local call record for inbound Vapi call: ${vapiCallId}`);
+          } else if (localCall) {
             await storage.updateCall(localCall.id, {
               status: "completed",
               transcript: transcript || null,
@@ -165,20 +256,6 @@ export function registerVapiRoutes(app: Express) {
             console.log(`Updated call ${localCall.id} from Vapi webhook`);
           } else {
             console.log(`No local call found for Vapi call ID: ${vapiCallId}`);
-          }
-        }
-      }
-      
-      if (message?.type === "status-update") {
-        const vapiCallId = message?.call?.id;
-        const status = message?.status;
-        
-        if (vapiCallId && status === "ended") {
-          const localCall = await storage.getCallByVapiId(vapiCallId);
-          if (localCall && localCall.status === "in-progress") {
-            await storage.updateCall(localCall.id, {
-              status: "completed",
-            });
           }
         }
       }
