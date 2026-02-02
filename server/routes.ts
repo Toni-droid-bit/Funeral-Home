@@ -9,7 +9,7 @@ import { registerImageRoutes } from "./replit_integrations/image";
 import { registerVapiRoutes } from "./vapi";
 import { setupDeepgramWebSocket } from "./deepgram";
 import { getFieldLabel, calculateMissingFields, validateIntakeData } from "./intake-parser";
-import { IntakeData, REQUIRED_INTAKE_FIELDS, intakeDataSchema } from "@shared/schema";
+import { IntakeData, REQUIRED_INTAKE_FIELDS, intakeDataSchema, checklistTemplateItemsSchema, type ChecklistItem } from "@shared/schema";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -269,13 +269,118 @@ export async function registerRoutes(
     res.json(stats);
   });
 
+  // Checklist Templates
+  app.get("/api/checklist-templates", async (req, res) => {
+    const templates = await storage.getChecklistTemplates();
+    res.json(templates);
+  });
+
+  app.get("/api/checklist-templates/default", async (req, res) => {
+    const template = await storage.getDefaultChecklistTemplate();
+    if (!template) {
+      return res.status(404).json({ message: "No default template found" });
+    }
+    res.json(template);
+  });
+
+  app.get("/api/checklist-templates/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    const template = await storage.getChecklistTemplate(id);
+    if (!template) {
+      return res.status(404).json({ message: "Template not found" });
+    }
+    res.json(template);
+  });
+
+  const checklistTemplateSchema = z.object({
+    name: z.string().min(1),
+    description: z.string().optional(),
+    isDefault: z.boolean().optional(),
+    items: checklistTemplateItemsSchema,
+  });
+
+  app.post("/api/checklist-templates", async (req, res) => {
+    const parseResult = checklistTemplateSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ message: parseResult.error.errors[0].message });
+    }
+    
+    const template = await storage.createChecklistTemplate(parseResult.data);
+    res.status(201).json(template);
+  });
+
+  app.put("/api/checklist-templates/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    const existing = await storage.getChecklistTemplate(id);
+    if (!existing) {
+      return res.status(404).json({ message: "Template not found" });
+    }
+    
+    const parseResult = checklistTemplateSchema.partial().safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ message: parseResult.error.errors[0].message });
+    }
+    
+    const template = await storage.updateChecklistTemplate(id, parseResult.data);
+    res.json(template);
+  });
+
+  app.delete("/api/checklist-templates/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    const existing = await storage.getChecklistTemplate(id);
+    if (!existing) {
+      return res.status(404).json({ message: "Template not found" });
+    }
+    
+    await storage.deleteChecklistTemplate(id);
+    res.status(204).send();
+  });
+
   // Seed Data
   await seedDatabase();
 
   return httpServer;
 }
 
+// Default checklist items based on user requirements
+const DEFAULT_CHECKLIST_ITEMS: ChecklistItem[] = [
+  // Critical - Must Have Before Family Leaves
+  { id: "c1", question: "Legal name of deceased", category: "critical", fieldMapping: "deceasedInfo.fullName", isCustom: false },
+  { id: "c2", question: "Date of birth", category: "critical", fieldMapping: "deceasedInfo.dateOfBirth", isCustom: false },
+  { id: "c3", question: "Date of death", category: "critical", fieldMapping: "deceasedInfo.dateOfDeath", isCustom: false },
+  { id: "c4", question: "Next of kin / authorized person", category: "critical", fieldMapping: "callerInfo.name", isCustom: false },
+  { id: "c5", question: "Contact phone number", category: "critical", fieldMapping: "callerInfo.phone", isCustom: false },
+  { id: "c6", question: "Service type (burial or cremation)", category: "critical", fieldMapping: "servicePreferences.burialOrCremation", isCustom: false },
+  { id: "c7", question: "Service date/time (or at least week)", category: "critical", fieldMapping: "appointment.preferredDate", isCustom: false },
+  { id: "c8", question: "Payment responsibility confirmed", category: "critical", isCustom: false },
+  
+  // Important - Should Confirm
+  { id: "i1", question: "Cemetery/crematorium selection", category: "important", isCustom: false },
+  { id: "i2", question: "Clothing for deceased", category: "important", isCustom: false },
+  { id: "i3", question: "Obituary information (birthplace, family, achievements)", category: "important", isCustom: false },
+  { id: "i4", question: "Flower preferences", category: "important", isCustom: false },
+  { id: "i5", question: "Music selections", category: "important", isCustom: false },
+  { id: "i6", question: "Viewing/visitation preferences", category: "important", isCustom: false },
+  
+  // Supplementary - Can Follow Up
+  { id: "s1", question: "Specific readings or poems", category: "supplementary", isCustom: false },
+  { id: "s2", question: "Photo selections", category: "supplementary", isCustom: false },
+  { id: "s3", question: "Reception catering details", category: "supplementary", isCustom: false },
+  { id: "s4", question: "Memorial donations organization", category: "supplementary", isCustom: false },
+];
+
 async function seedDatabase() {
+  // Seed default checklist template
+  const existingTemplates = await storage.getChecklistTemplates();
+  if (existingTemplates.length === 0) {
+    await storage.createChecklistTemplate({
+      name: "Standard Follow-up Meeting Checklist",
+      description: "Default checklist for funeral arrangement follow-up meetings. Includes critical, important, and supplementary questions.",
+      isDefault: true,
+      items: DEFAULT_CHECKLIST_ITEMS,
+    });
+  }
+
   const homes = await storage.getFuneralHomes();
   if (homes.length === 0) {
     const home = await storage.createFuneralHome({

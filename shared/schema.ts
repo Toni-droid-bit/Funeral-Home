@@ -117,6 +117,32 @@ export const documents = pgTable("documents", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Checklist templates for intake meetings
+export const checklistTemplates = pgTable("checklist_templates", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),
+  isDefault: boolean("is_default").default(false),
+  funeralHomeId: integer("funeral_home_id").references(() => funeralHomes.id),
+  items: jsonb("items").notNull(), // ChecklistItem[]
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Checklist item schema for type safety
+export const checklistItemSchema = z.object({
+  id: z.string(),
+  question: z.string(),
+  category: z.enum(["critical", "important", "supplementary"]),
+  fieldMapping: z.string().optional(), // Maps to intakeData field like "deceasedInfo.fullName"
+  isCustom: z.boolean().default(false),
+});
+
+export const checklistTemplateItemsSchema = z.array(checklistItemSchema);
+
+export type ChecklistItem = z.infer<typeof checklistItemSchema>;
+export type ChecklistTemplateItems = z.infer<typeof checklistTemplateItemsSchema>;
+
 // === RELATIONS ===
 
 export const casesRelations = relations(cases, ({ one, many }) => ({
@@ -157,6 +183,7 @@ export const insertCaseSchema = createInsertSchema(cases).omit({ id: true, creat
 export const insertCallSchema = createInsertSchema(calls).omit({ id: true, createdAt: true });
 export const insertMeetingSchema = createInsertSchema(meetings).omit({ id: true, createdAt: true });
 export const insertDocumentSchema = createInsertSchema(documents).omit({ id: true, createdAt: true });
+export const insertChecklistTemplateSchema = createInsertSchema(checklistTemplates).omit({ id: true, createdAt: true, updatedAt: true });
 
 // === EXPLICIT API CONTRACT TYPES ===
 
@@ -174,6 +201,9 @@ export type InsertMeeting = z.infer<typeof insertMeetingSchema>;
 
 export type Document = typeof documents.$inferSelect;
 export type InsertDocument = z.infer<typeof insertDocumentSchema>;
+
+export type ChecklistTemplate = typeof checklistTemplates.$inferSelect;
+export type InsertChecklistTemplate = z.infer<typeof insertChecklistTemplateSchema>;
 
 // Request types
 export type CreateCaseRequest = InsertCase;

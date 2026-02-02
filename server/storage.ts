@@ -1,11 +1,12 @@
 import { 
-  users, cases, calls, meetings, documents, funeralHomes,
+  users, cases, calls, meetings, documents, funeralHomes, checklistTemplates,
   type User, type UpsertUser,
   type Case, type InsertCase, type UpdateCaseRequest,
   type Call, type InsertCall,
   type Meeting, type InsertMeeting,
   type Document, type InsertDocument,
-  type FuneralHome, type InsertFuneralHome
+  type FuneralHome, type InsertFuneralHome,
+  type ChecklistTemplate, type InsertChecklistTemplate
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
@@ -44,6 +45,14 @@ export interface IStorage {
   getDocuments(): Promise<Document[]>;
   getDocumentsByCaseId(caseId: number): Promise<Document[]>;
   createDocument(data: InsertDocument): Promise<Document>;
+  
+  // Checklist Templates
+  getChecklistTemplates(): Promise<ChecklistTemplate[]>;
+  getChecklistTemplate(id: number): Promise<ChecklistTemplate | undefined>;
+  getDefaultChecklistTemplate(): Promise<ChecklistTemplate | undefined>;
+  createChecklistTemplate(data: InsertChecklistTemplate): Promise<ChecklistTemplate>;
+  updateChecklistTemplate(id: number, data: Partial<InsertChecklistTemplate>): Promise<ChecklistTemplate>;
+  deleteChecklistTemplate(id: number): Promise<void>;
   
   // Dashboard Stats
   getDashboardStats(): Promise<{ activeCases: number, pendingCalls: number, upcomingMeetings: number }>;
@@ -157,6 +166,35 @@ export class DatabaseStorage implements IStorage {
   async createDocument(data: InsertDocument): Promise<Document> {
     const [d] = await db.insert(documents).values(data).returning();
     return d;
+  }
+
+  // Checklist Templates
+  async getChecklistTemplates(): Promise<ChecklistTemplate[]> {
+    return await db.select().from(checklistTemplates).orderBy(desc(checklistTemplates.createdAt));
+  }
+
+  async getChecklistTemplate(id: number): Promise<ChecklistTemplate | undefined> {
+    const [t] = await db.select().from(checklistTemplates).where(eq(checklistTemplates.id, id));
+    return t;
+  }
+
+  async getDefaultChecklistTemplate(): Promise<ChecklistTemplate | undefined> {
+    const [t] = await db.select().from(checklistTemplates).where(eq(checklistTemplates.isDefault, true));
+    return t;
+  }
+
+  async createChecklistTemplate(data: InsertChecklistTemplate): Promise<ChecklistTemplate> {
+    const [t] = await db.insert(checklistTemplates).values(data).returning();
+    return t;
+  }
+
+  async updateChecklistTemplate(id: number, data: Partial<InsertChecklistTemplate>): Promise<ChecklistTemplate> {
+    const [t] = await db.update(checklistTemplates).set({ ...data, updatedAt: new Date() }).where(eq(checklistTemplates.id, id)).returning();
+    return t;
+  }
+
+  async deleteChecklistTemplate(id: number): Promise<void> {
+    await db.delete(checklistTemplates).where(eq(checklistTemplates.id, id));
   }
 
   async getDashboardStats(): Promise<{ activeCases: number, pendingCalls: number, upcomingMeetings: number }> {
