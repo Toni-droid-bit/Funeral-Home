@@ -86,13 +86,15 @@ export function registerVapiRoutes(app: Express) {
         };
       }
 
-      const call = await vapiClient.calls.create(callConfig);
+      const vapiCall = await vapiClient.calls.create(callConfig);
 
       const newCall = await storage.createCall({
+        vapiCallId: vapiCall.id,
         callerPhone: customerNumber,
         callerName: customerName || null,
         caseId: caseId || null,
         status: "in-progress",
+        direction: "outbound",
         detectedLanguage: "English",
         transcript: null,
         summary: null,
@@ -101,7 +103,7 @@ export function registerVapiRoutes(app: Express) {
       });
 
       res.status(201).json({
-        vapiCall: call,
+        vapiCall,
         localCall: newCall,
       });
     } catch (error: any) {
@@ -147,17 +149,36 @@ export function registerVapiRoutes(app: Express) {
       
       if (message?.type === "end-of-call-report") {
         const { call, transcript, summary, recordingUrl } = message;
+        const vapiCallId = call?.id;
         
-        const calls = await storage.getCalls();
-        const localCall = calls.find(c => c.callerPhone === call?.customer?.number && c.status === "in-progress");
+        if (vapiCallId) {
+          const localCall = await storage.getCallByVapiId(vapiCallId);
+          
+          if (localCall) {
+            await storage.updateCall(localCall.id, {
+              status: "completed",
+              transcript: transcript || null,
+              summary: summary || null,
+              audioUrl: recordingUrl || null,
+            });
+            console.log(`Updated call ${localCall.id} from Vapi webhook`);
+          } else {
+            console.log(`No local call found for Vapi call ID: ${vapiCallId}`);
+          }
+        }
+      }
+      
+      if (message?.type === "status-update") {
+        const vapiCallId = message?.call?.id;
+        const status = message?.status;
         
-        if (localCall) {
-          await storage.updateCall(localCall.id, {
-            status: "completed",
-            transcript: transcript || null,
-            summary: summary || null,
-            audioUrl: recordingUrl || null,
-          });
+        if (vapiCallId && status === "ended") {
+          const localCall = await storage.getCallByVapiId(vapiCallId);
+          if (localCall && localCall.status === "in-progress") {
+            await storage.updateCall(localCall.id, {
+              status: "completed",
+            });
+          }
         }
       }
       

@@ -32,6 +32,7 @@ export const cases = pgTable("cases", {
 
 export const calls = pgTable("calls", {
   id: serial("id").primaryKey(),
+  vapiCallId: text("vapi_call_id"), // Vapi.ai call ID for webhook matching
   caseId: integer("case_id").references(() => cases.id),
   callerPhone: text("caller_phone").notNull(),
   callerName: text("caller_name"),
@@ -41,6 +42,7 @@ export const calls = pgTable("calls", {
   sentiment: text("sentiment"),
   audioUrl: text("audio_url"),
   status: text("status").default("completed"), // missed, completed, in-progress
+  direction: text("direction").default("inbound"), // inbound, outbound
   createdAt: timestamp("created_at").defaultNow(),
 });
 

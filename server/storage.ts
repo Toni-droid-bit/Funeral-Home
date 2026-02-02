@@ -29,6 +29,7 @@ export interface IStorage {
   // Calls (xLink)
   getCalls(): Promise<Call[]>;
   getCall(id: number): Promise<Call | undefined>;
+  getCallByVapiId(vapiCallId: string): Promise<Call | undefined>;
   getCallsByCaseId(caseId: number): Promise<Call[]>;
   createCall(data: InsertCall): Promise<Call>;
   updateCall(id: number, data: Partial<InsertCall>): Promise<Call>;
@@ -103,6 +104,11 @@ export class DatabaseStorage implements IStorage {
 
   async getCall(id: number): Promise<Call | undefined> {
     const [c] = await db.select().from(calls).where(eq(calls.id, id));
+    return c;
+  }
+
+  async getCallByVapiId(vapiCallId: string): Promise<Call | undefined> {
+    const [c] = await db.select().from(calls).where(eq(calls.vapiCallId, vapiCallId));
     return c;
   }
 
