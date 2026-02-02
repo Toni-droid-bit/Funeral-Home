@@ -156,7 +156,7 @@ export function registerVapiRoutes(app: Express) {
         const customerNumber = message?.call?.customer?.number;
         const customerName = message?.call?.customer?.name;
         
-        if (vapiCallId && callType === "inboundPhoneCall") {
+        if (vapiCallId && (callType === "inboundPhoneCall" || callType === "webCall")) {
           // Check if we already have a record for this call
           const existingCall = await storage.getCallByVapiId(vapiCallId);
           
@@ -189,7 +189,7 @@ export function registerVapiRoutes(app: Express) {
         const customerName = message?.call?.customer?.name;
         
         // Create record for inbound calls when they start
-        if (vapiCallId && status === "in-progress" && callType === "inboundPhoneCall") {
+        if (vapiCallId && status === "in-progress" && (callType === "inboundPhoneCall" || callType === "webCall")) {
           const existingCall = await storage.getCallByVapiId(vapiCallId);
           
           if (!existingCall) {
@@ -232,7 +232,7 @@ export function registerVapiRoutes(app: Express) {
           let localCall = await storage.getCallByVapiId(vapiCallId);
           
           // If no local call exists (e.g., inbound call we didn't catch earlier), create one
-          if (!localCall && callType === "inboundPhoneCall") {
+          if (!localCall && (callType === "inboundPhoneCall" || callType === "webCall")) {
             localCall = await storage.createCall({
               vapiCallId: vapiCallId,
               callerPhone: customerNumber || "Unknown",
@@ -260,7 +260,7 @@ export function registerVapiRoutes(app: Express) {
           }
           
           // Parse transcript to extract structured intake data and create/update case
-          if (localCall && transcript && callType === "inboundPhoneCall") {
+          if (localCall && transcript && (callType === "inboundPhoneCall" || callType === "webCall")) {
             try {
               console.log(`Parsing call transcript for intake data...`);
               const intakeData = await parseCallTranscriptToIntake(transcript, summary || undefined);
