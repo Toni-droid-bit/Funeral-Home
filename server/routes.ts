@@ -597,6 +597,59 @@ export async function registerRoutes(
     }
   });
 
+  // Live extraction during recording - extract data from transcript without saving meeting
+  app.post("/api/cases/:id/live-extract", async (req, res) => {
+    const caseId = Number(req.params.id);
+    const { transcript } = req.body;
+
+    if (!transcript || transcript.trim().length < 20) {
+      return res.status(400).json({ message: "Transcript too short for extraction" });
+    }
+
+    const caseItem = await storage.getCase(caseId);
+    if (!caseItem) {
+      return res.status(404).json({ message: "Case not found" });
+    }
+
+    try {
+      // Parse the live transcript
+      const intakeData = await parseMeetingTranscriptToIntake(transcript);
+      
+      // Merge with existing intake data
+      const existingIntake = (caseItem.intakeData as IntakeData) || {};
+      const mergedIntake = mergeIntakeData(existingIntake, intakeData);
+      const newMissingFields = calculateMissingFields(mergedIntake);
+
+      const updates: any = {
+        intakeData: mergedIntake,
+        missingFields: newMissingFields,
+      };
+
+      // Update deceased name if extracted and current is placeholder
+      if (intakeData.deceasedInfo?.fullName &&
+        (caseItem.deceasedName === "Unknown (Pending)" || !caseItem.deceasedName)) {
+        updates.deceasedName = intakeData.deceasedInfo.fullName;
+      }
+
+      // Update religion if extracted
+      if (intakeData.servicePreferences?.religion &&
+        (caseItem.religion === "Unknown" || !caseItem.religion)) {
+        updates.religion = intakeData.servicePreferences.religion;
+      }
+
+      await storage.updateCase(caseId, updates);
+
+      res.json({
+        success: true,
+        extractedData: intakeData,
+        mergedData: mergedIntake
+      });
+    } catch (error: any) {
+      console.error("Live extraction error:", error);
+      res.status(500).json({ message: "Extraction failed", error: error.message });
+    }
+  });
+
   // Get computed checklist for a case (using default template)
   app.get("/api/cases/:id/checklist", async (req, res) => {
     const id = Number(req.params.id);

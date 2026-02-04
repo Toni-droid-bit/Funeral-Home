@@ -94,6 +94,8 @@ export default function Communications() {
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recordingTimerRef = useRef<number | null>(null);
+  const lastExtractionRef = useRef<string>("");
+  const extractionTimerRef = useRef<number | null>(null);
 
   const { data: calls = [], isLoading: callsLoading } = useQuery<Call[]>({
     queryKey: ["/api/calls"],
@@ -196,6 +198,21 @@ export default function Communications() {
     },
   });
 
+  // Live extraction mutation for real-time checklist updates during recording
+  const liveExtractMutation = useMutation({
+    mutationFn: async ({ caseId, transcript }: { caseId: number; transcript: string }) => {
+      return apiRequest("POST", `/api/cases/${caseId}/live-extract`, { transcript });
+    },
+    onSuccess: () => {
+      // Refetch checklist to show updated items
+      refetchChecklist();
+      queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", selectedCaseId] });
+    },
+    onError: (error: any) => {
+      console.log("Live extraction skipped:", error?.message);
+    },
+  });
+
   // Create meeting mutation with auto-extraction
   const createMeetingMutation = useMutation({
     mutationFn: async (meetingData: { caseId: number; directorName: string; language: string; transcript: string }) => {
@@ -293,8 +310,38 @@ export default function Communications() {
   useEffect(() => {
     return () => {
       cleanupAudio();
+      if (extractionTimerRef.current) {
+        clearInterval(extractionTimerRef.current);
+        extractionTimerRef.current = null;
+      }
     };
   }, [cleanupAudio]);
+
+  // Real-time extraction during recording - every 15 seconds when transcript changes
+  useEffect(() => {
+    if (isRecording && selectedCaseId && liveTranscript.length > 50) {
+      // Clear any existing timer
+      if (extractionTimerRef.current) {
+        clearInterval(extractionTimerRef.current);
+      }
+      
+      // Set up interval for live extraction every 15 seconds
+      extractionTimerRef.current = window.setInterval(() => {
+        // Only extract if transcript has changed significantly since last extraction
+        if (selectedCaseId && liveTranscript.length > lastExtractionRef.current.length + 30) {
+          lastExtractionRef.current = liveTranscript;
+          liveExtractMutation.mutate({ caseId: selectedCaseId, transcript: liveTranscript });
+        }
+      }, 15000);
+      
+      return () => {
+        if (extractionTimerRef.current) {
+          clearInterval(extractionTimerRef.current);
+          extractionTimerRef.current = null;
+        }
+      };
+    }
+  }, [isRecording, selectedCaseId, liveTranscript.length]);
 
   const handleStartRecording = async () => {
     if (!selectedCaseId) {
@@ -309,6 +356,7 @@ export default function Communications() {
     setIsConnecting(true);
     setLiveTranscript("");
     setMode("recording");
+    lastExtractionRef.current = "";
 
     try {
       // Request microphone access
