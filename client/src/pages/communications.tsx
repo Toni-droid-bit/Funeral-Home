@@ -564,8 +564,13 @@ export default function Communications() {
               </CardTitle>
               {checklist && (
                 <div className="flex items-center gap-2 mt-2">
-                  <Progress value={checklist.completedPercentage} className="h-2 flex-1" />
-                  <span className="text-sm text-muted-foreground">{checklist.completedPercentage}%</span>
+                  <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-primary transition-all duration-300"
+                      style={{ width: `${checklist.completedPercentage}%` }}
+                    />
+                  </div>
+                  <span className="text-sm text-muted-foreground font-medium">{checklist.completedPercentage}%</span>
                 </div>
               )}
             </CardHeader>
@@ -838,7 +843,12 @@ export default function Communications() {
                   <p className="text-sm text-muted-foreground">
                     {checklist.completedCount}/{checklist.totalItems} items complete
                   </p>
-                  <Progress value={checklist.completedPercentage} className="h-2 mt-2" />
+                  <div className="h-2 mt-2 bg-muted rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-primary transition-all duration-300"
+                      style={{ width: `${checklist.completedPercentage}%` }}
+                    />
+                  </div>
                 </CardHeader>
                 <CardContent className="max-h-[400px] overflow-y-auto">
                   {["critical", "important", "supplementary"].map(category => {
