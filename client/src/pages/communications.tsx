@@ -107,14 +107,14 @@ export default function Communications() {
     queryKey: ["/api/cases"],
   });
 
-  const { data: checklist, refetch: refetchChecklist } = useQuery<ComputedChecklist>({
+  const { data: checklist, isLoading: checklistLoading, refetch: refetchChecklist } = useQuery<ComputedChecklist>({
     queryKey: ["/api/cases", selectedCaseId, "checklist"],
     queryFn: async () => {
       const res = await fetch(`/api/cases/${selectedCaseId}/checklist`);
       if (!res.ok) throw new Error("Failed to fetch checklist");
       return res.json();
     },
-    enabled: !!selectedCaseId && mode === "review",
+    enabled: !!selectedCaseId && (mode === "review" || mode === "recording"),
   });
 
   // Fetch selected case details for extracted data display
@@ -502,21 +502,22 @@ export default function Communications() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Recording Controls */}
           <Card>
-            <CardContent className="p-8 text-center">
-              <div className={`w-32 h-32 mx-auto rounded-full flex items-center justify-center mb-6 ${
+            <CardContent className="p-6 text-center">
+              <div className={`w-24 h-24 mx-auto rounded-full flex items-center justify-center mb-4 ${
                 isRecording ? "bg-red-100 dark:bg-red-900/30 animate-pulse" : 
                 isConnecting ? "bg-amber-100 dark:bg-amber-900/30 animate-pulse" : "bg-muted"
               }`}>
                 {isConnecting ? (
-                  <Loader2 className="w-16 h-16 text-amber-600 animate-spin" />
+                  <Loader2 className="w-12 h-12 text-amber-600 animate-spin" />
                 ) : (
-                  <Mic className={`w-16 h-16 ${isRecording ? "text-red-600" : "text-muted-foreground"}`} />
+                  <Mic className={`w-12 h-12 ${isRecording ? "text-red-600" : "text-muted-foreground"}`} />
                 )}
               </div>
               
-              <div className="text-4xl font-mono mb-6">
+              <div className="text-3xl font-mono mb-4">
                 {Math.floor(recordingTime / 60).toString().padStart(2, "0")}:
                 {(recordingTime % 60).toString().padStart(2, "0")}
               </div>
@@ -544,25 +545,89 @@ export default function Communications() {
                 )}
               </Button>
 
-              <p className="text-sm text-muted-foreground mt-4">
+              <p className="text-sm text-muted-foreground mt-3">
                 {isConnecting 
-                  ? "Connecting to transcription service..."
+                  ? "Connecting..."
                   : isRecording 
-                    ? "Recording in progress. Click stop when the meeting ends."
-                    : "Initializing microphone..."}
+                    ? "Recording in progress"
+                    : "Initializing..."}
               </p>
             </CardContent>
           </Card>
 
+          {/* Checklist Panel */}
           <Card>
-            <CardHeader>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <ClipboardList className="w-5 h-5" />
+                Meeting Checklist
+              </CardTitle>
+              {checklist && (
+                <div className="flex items-center gap-2 mt-2">
+                  <Progress value={checklist.completedPercentage} className="h-2 flex-1" />
+                  <span className="text-sm text-muted-foreground">{checklist.completedPercentage}%</span>
+                </div>
+              )}
+            </CardHeader>
+            <CardContent className="max-h-[350px] overflow-y-auto">
+              {checklistLoading ? (
+                <div className="flex justify-center py-4">
+                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : checklist?.items && checklist.items.length > 0 ? (
+                <div className="space-y-3">
+                  {["critical", "important", "supplementary"].map((category) => {
+                    const items = checklist.items.filter((item: ChecklistItemWithStatus) => item.category === category);
+                    if (items.length === 0) return null;
+                    const config = categoryConfig[category];
+                    return (
+                      <div key={category}>
+                        <h4 className={`text-xs font-medium uppercase tracking-wide mb-1 ${config.iconColor}`}>
+                          {config.label}
+                        </h4>
+                        <div className="space-y-1">
+                          {items.map((item: ChecklistItemWithStatus) => (
+                            <div
+                              key={item.id}
+                              className={`flex items-center gap-2 p-2 rounded-md text-sm ${
+                                item.isCompleted 
+                                  ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400" 
+                                  : "bg-muted/50"
+                              }`}
+                            >
+                              {item.isCompleted ? (
+                                <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0" />
+                              ) : (
+                                <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/30 flex-shrink-0" />
+                              )}
+                              <span className={item.isCompleted ? "line-through opacity-70" : ""}>
+                                {item.question}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground italic py-4 text-center">
+                  No checklist items configured
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Live Transcript */}
+          <Card>
+            <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
                 <FileText className="w-5 h-5" />
                 Live Transcript
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="min-h-[300px] max-h-[400px] overflow-y-auto p-4 bg-muted/50 rounded-md">
+              <div className="min-h-[300px] max-h-[350px] overflow-y-auto p-3 bg-muted/50 rounded-md">
                 {liveTranscript ? (
                   <p className="text-sm whitespace-pre-wrap">{liveTranscript}</p>
                 ) : (
@@ -570,8 +635,8 @@ export default function Communications() {
                     {isConnecting 
                       ? "Waiting for connection..."
                       : isRecording 
-                        ? "Listening... speak to see transcription appear here."
-                        : "Transcript will appear here during recording."}
+                        ? "Listening... speak to see transcription."
+                        : "Transcript will appear here."}
                   </p>
                 )}
               </div>

@@ -80,20 +80,20 @@ Return ONLY the JSON object, no other text.`;
     });
 
     const content = response.choices[0]?.message?.content?.trim() || "{}";
-    
+
     // Extract JSON from response (handle markdown code blocks)
     let jsonStr = content;
     if (content.startsWith("```")) {
       jsonStr = content.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
     }
-    
+
     const parsed = JSON.parse(jsonStr);
-    
+
     // Clean up null values
     const cleanObject = (obj: any): any => {
       if (obj === null || obj === undefined) return undefined;
       if (typeof obj !== "object") return obj;
-      
+
       const result: any = {};
       for (const [key, value] of Object.entries(obj)) {
         if (value !== null && value !== undefined) {
@@ -109,9 +109,9 @@ Return ONLY the JSON object, no other text.`;
       }
       return result;
     };
-    
+
     const cleaned = cleanObject(parsed);
-    
+
     // Validate against schema
     return validateIntakeData(cleaned);
   } catch (error) {
@@ -122,16 +122,16 @@ Return ONLY the JSON object, no other text.`;
 
 export function calculateMissingFields(intakeData: IntakeData): string[] {
   const missing: string[] = [];
-  
+
   for (const field of REQUIRED_INTAKE_FIELDS) {
     const [section, key] = field.split(".");
     const sectionData = intakeData[section as keyof IntakeData];
-    
+
     if (!sectionData || !(sectionData as any)[key]) {
       missing.push(field);
     }
   }
-  
+
   return missing;
 }
 
@@ -153,9 +153,9 @@ export function mergeIntakeData(existing: IntakeData, newData: IntakeData): Inta
   const deepMerge = (target: any, source: any): any => {
     if (!source) return target;
     if (!target) return source;
-    
+
     const result = { ...target };
-    
+
     for (const [key, value] of Object.entries(source)) {
       if (value !== undefined && value !== null) {
         if (typeof value === "object" && !Array.isArray(value)) {
@@ -165,10 +165,10 @@ export function mergeIntakeData(existing: IntakeData, newData: IntakeData): Inta
         }
       }
     }
-    
+
     return result;
   };
-  
+
   return deepMerge(existing, newData);
 }
 
@@ -264,18 +264,18 @@ Return ONLY the JSON object, no other text.`;
     });
 
     const content = response.choices[0]?.message?.content?.trim() || "{}";
-    
+
     let jsonStr = content;
     if (content.startsWith("```")) {
       jsonStr = content.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
     }
-    
+
     const parsed = JSON.parse(jsonStr);
-    
+
     const cleanObject = (obj: any): any => {
       if (obj === null || obj === undefined) return undefined;
       if (typeof obj !== "object") return obj;
-      
+
       const result: any = {};
       for (const [key, value] of Object.entries(obj)) {
         if (value !== null && value !== undefined) {
@@ -291,7 +291,7 @@ Return ONLY the JSON object, no other text.`;
       }
       return result;
     };
-    
+
     const cleaned = cleanObject(parsed);
     return validateIntakeData(cleaned);
   } catch (error) {
@@ -302,67 +302,65 @@ Return ONLY the JSON object, no other text.`;
 
 export function generateIntakeDocument(caseData: any, intakeData: IntakeData): string {
   const now = new Date().toLocaleString();
-  
-  let doc = `# Intake Summary Document\n\n`;
-  doc += `**Case:** ${caseData.deceasedName || "Unknown"}\n`;
-  doc += `**Last Updated:** ${now}\n\n`;
-  doc += `---\n\n`;
-  
+
+  let doc = `INTAKE SUMMARY DOCUMENT\n\n`;
+  doc += `Case: ${caseData.deceasedName || "Unknown"}\n`;
+  doc += `Last Updated: ${now}\n\n`;
+
   // Deceased Information
-  doc += `## Deceased Information\n\n`;
+  doc += `DECEASED INFORMATION\n`;
   if (intakeData.deceasedInfo) {
     const d = intakeData.deceasedInfo;
-    if (d.fullName) doc += `- **Full Legal Name:** ${d.fullName}\n`;
-    if (d.dateOfBirth) doc += `- **Date of Birth:** ${d.dateOfBirth}\n`;
-    if (d.dateOfDeath) doc += `- **Date of Death:** ${d.dateOfDeath}\n`;
-    if (d.age) doc += `- **Age:** ${d.age}\n`;
-    if (d.currentLocation) doc += `- **Current Location:** ${d.currentLocation}\n`;
-    if (d.causeOfDeath) doc += `- **Cause of Death:** ${d.causeOfDeath}\n`;
+    if (d.fullName) doc += `Full Legal Name: ${d.fullName}\n`;
+    if (d.dateOfBirth) doc += `Date of Birth: ${d.dateOfBirth}\n`;
+    if (d.dateOfDeath) doc += `Date of Death: ${d.dateOfDeath}\n`;
+    if (d.age) doc += `Age: ${d.age}\n`;
+    if (d.currentLocation) doc += `Current Location: ${d.currentLocation}\n`;
+    if (d.causeOfDeath) doc += `Cause of Death: ${d.causeOfDeath}\n`;
   }
   doc += `\n`;
-  
+
   // Next of Kin / Caller Information
-  doc += `## Next of Kin / Primary Contact\n\n`;
+  doc += `NEXT OF KIN / PRIMARY CONTACT\n`;
   if (intakeData.callerInfo) {
     const c = intakeData.callerInfo;
-    if (c.name) doc += `- **Name:** ${c.name}\n`;
-    if (c.relationship) doc += `- **Relationship:** ${c.relationship}\n`;
-    if (c.phone) doc += `- **Phone:** ${c.phone}\n`;
-    if (c.email) doc += `- **Email:** ${c.email}\n`;
+    if (c.name) doc += `Name: ${c.name}\n`;
+    if (c.relationship) doc += `Relationship: ${c.relationship}\n`;
+    if (c.phone) doc += `Phone: ${c.phone}\n`;
+    if (c.email) doc += `Email: ${c.email}\n`;
   }
   doc += `\n`;
-  
+
   // Service Preferences
-  doc += `## Service Preferences\n\n`;
+  doc += `SERVICE PREFERENCES\n`;
   if (intakeData.servicePreferences) {
     const s = intakeData.servicePreferences;
-    if (s.religion) doc += `- **Religion:** ${s.religion}\n`;
-    if (s.subTradition) doc += `- **Tradition:** ${s.subTradition}\n`;
-    if (s.burialOrCremation) doc += `- **Disposition:** ${s.burialOrCremation}\n`;
-    if (s.serviceType) doc += `- **Service Type:** ${s.serviceType}\n`;
-    if (s.urgency) doc += `- **Urgency:** ${s.urgency === "urgent-24hr" ? "URGENT - 24 Hour Burial Required" : "Normal"}\n`;
-    if (s.cemeteryOrCrematorium) doc += `- **Cemetery/Crematorium:** ${s.cemeteryOrCrematorium}\n`;
-    if (s.clothing) doc += `- **Clothing:** ${s.clothing}\n`;
-    if (s.obituary) doc += `- **Obituary:** ${s.obituary}\n`;
-    if (s.flowers) doc += `- **Flowers:** ${s.flowers}\n`;
-    if (s.music) doc += `- **Music:** ${s.music}\n`;
-    if (s.readings) doc += `- **Readings:** ${s.readings}\n`;
-    if (s.reception) doc += `- **Reception:** ${s.reception}\n`;
-    if (s.donations) doc += `- **Donations:** ${s.donations}\n`;
+    if (s.religion) doc += `Religion: ${s.religion}\n`;
+    if (s.subTradition) doc += `Tradition: ${s.subTradition}\n`;
+    if (s.burialOrCremation) doc += `Disposition: ${s.burialOrCremation}\n`;
+    if (s.serviceType) doc += `Service Type: ${s.serviceType}\n`;
+    if (s.urgency) doc += `Urgency: ${s.urgency === "urgent-24hr" ? "URGENT - 24 Hour Burial Required" : "Normal"}\n`;
+    if (s.cemeteryOrCrematorium) doc += `Cemetery/Crematorium: ${s.cemeteryOrCrematorium}\n`;
+    if (s.clothing) doc += `Clothing: ${s.clothing}\n`;
+    if (s.obituary) doc += `Obituary: ${s.obituary}\n`;
+    if (s.flowers) doc += `Flowers: ${s.flowers}\n`;
+    if (s.music) doc += `Music: ${s.music}\n`;
+    if (s.readings) doc += `Readings: ${s.readings}\n`;
+    if (s.reception) doc += `Reception: ${s.reception}\n`;
+    if (s.donations) doc += `Donations: ${s.donations}\n`;
   }
   doc += `\n`;
-  
+
   // Appointment Info
   if (intakeData.appointment) {
-    doc += `## Appointment\n\n`;
+    doc += `APPOINTMENT\n`;
     const a = intakeData.appointment;
-    if (a.preferredDate) doc += `- **Date:** ${a.preferredDate}\n`;
-    if (a.preferredTime) doc += `- **Time:** ${a.preferredTime}\n`;
-    if (a.attendeeCount) doc += `- **Attendees:** ${a.attendeeCount}\n`;
+    if (a.preferredDate) doc += `Date: ${a.preferredDate}\n`;
+    if (a.preferredTime) doc += `Time: ${a.preferredTime}\n`;
+    if (a.attendeeCount) doc += `Attendees: ${a.attendeeCount}\n`;
   }
-  
-  doc += `\n---\n\n`;
-  doc += `*This document is automatically updated with each call and meeting interaction.*\n`;
-  
+
+  doc += `\nThis document is automatically updated with each call and meeting interaction.\n`;
+
   return doc;
 }

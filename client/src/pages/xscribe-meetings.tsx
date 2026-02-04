@@ -21,6 +21,8 @@ import {
   MapPin,
   Heart,
   FilePlus,
+  X,
+  Sparkles,
 } from "lucide-react";
 import { format } from "date-fns";
 import { StatusBadge } from "@/components/status-badge";
@@ -125,7 +127,7 @@ export default function XScribeMeetings() {
   const { data: cases } = useQuery<any[]>({ queryKey: ["/api/cases"] });
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  
+
   // State
   const [mode, setMode] = useState<Mode>("list");
   const [selectedCaseId, setSelectedCaseId] = useState("");
@@ -136,6 +138,8 @@ export default function XScribeMeetings() {
   const [editableTranscript, setEditableTranscript] = useState("");
   const [recordingTime, setRecordingTime] = useState(0);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [showChecklistPrompt, setShowChecklistPrompt] = useState(true);
+  const [isProcessingTranscript, setIsProcessingTranscript] = useState(false);
 
   // Fetch intake data when case is selected
   const { data: intakeData } = useQuery({
@@ -154,7 +158,7 @@ export default function XScribeMeetings() {
     isCompleted: boolean;
     isManuallyCompleted: boolean;
   }
-  
+
   interface ComputedChecklist {
     caseId: number;
     templateId: number;
@@ -164,7 +168,7 @@ export default function XScribeMeetings() {
     totalItems: number;
     completedPercentage: number;
   }
-  
+
   const { data: computedChecklist, refetch: refetchChecklist } = useQuery<ComputedChecklist | null>({
     queryKey: ["/api/cases", selectedCaseId, "checklist"],
     queryFn: async () => {
@@ -173,9 +177,11 @@ export default function XScribeMeetings() {
       if (!res.ok) return null;
       return res.json();
     },
-    enabled: !!selectedCaseId && mode === "review",
+    enabled: !!selectedCaseId && (mode === "review" || mode === "recording"),
+    // Refresh every 10 seconds during recording to catch auto-updates
+    refetchInterval: mode === "recording" ? 10000 : false,
   });
-  
+
   const toggleChecklistMutation = useMutation({
     mutationFn: async (itemId: string) => {
       return apiRequest("POST", `/api/cases/${selectedCaseId}/checklist/${itemId}/toggle`, {});
@@ -191,6 +197,35 @@ export default function XScribeMeetings() {
       });
     },
   });
+
+  // Process transcript in real-time to update checklist
+  const processTranscriptMutation = useMutation({
+    mutationFn: async (transcript: string) => {
+      return apiRequest("POST", `/api/cases/${selectedCaseId}/process-transcript`, { 
+        transcript 
+      });
+    },
+    onSuccess: () => {
+      // Refresh checklist after processing
+      refetchChecklist();
+    },
+    onError: (error: any) => {
+      console.error("Failed to process transcript:", error);
+    },
+  });
+
+  // Auto-process transcript every 30 seconds during recording
+  useEffect(() => {
+    if (mode === "recording" && selectedCaseId && fullTranscript && fullTranscript.length > 50) {
+      const interval = setInterval(() => {
+        setIsProcessingTranscript(true);
+        processTranscriptMutation.mutate(fullTranscript);
+        setTimeout(() => setIsProcessingTranscript(false), 2000);
+      }, 30000); // Every 30 seconds
+
+      return () => clearInterval(interval);
+    }
+  }, [mode, selectedCaseId, fullTranscript]);
 
   // Document generation mutation
   const generateDocsMutation = useMutation({
@@ -282,6 +317,7 @@ export default function XScribeMeetings() {
     setDirectorName("");
     setLanguage("en");
     setIsConnecting(false);
+    setShowChecklistPrompt(true);
   };
 
   const cleanupRecording = () => {
@@ -440,6 +476,11 @@ export default function XScribeMeetings() {
       }, 2000);
     }
 
+    // Process final transcript before moving to review
+    if (selectedCaseId && fullTranscript) {
+      processTranscriptMutation.mutate(fullTranscript);
+    }
+
     // Move to review mode
     setEditableTranscript(fullTranscript);
     setMode("review");
@@ -461,6 +502,9 @@ export default function XScribeMeetings() {
     const s = (seconds % 60).toString().padStart(2, "0");
     return `${m}:${s}`;
   };
+
+  // Get incomplete checklist items
+  const incompleteItems = computedChecklist?.items.filter(item => !item.isCompleted) || [];
 
   // ════════════════════════════════════════════
   // SETUP MODE — Choose case, language, director
@@ -518,7 +562,7 @@ export default function XScribeMeetings() {
                     {intakeData.completedPercentage}% Complete
                   </Badge>
                 </div>
-                
+
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   {intakeData.intakeData?.callerInfo?.name && (
                     <div className="flex items-start gap-2">
@@ -655,6 +699,12 @@ export default function XScribeMeetings() {
             <span className="text-2xl font-mono font-bold text-foreground tabular-nums">
               {formatTime(recordingTime)}
             </span>
+            {isProcessingTranscript && (
+              <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
+                <Sparkles className="w-3 h-3 mr-1" />
+                AI Processing...
+              </Badge>
+            )}
           </div>
 
           <Button
@@ -684,46 +734,129 @@ export default function XScribeMeetings() {
           )}
         </div>
 
-        {/* Live transcript area */}
-        <Card className="shadow-sm border-border/60">
-          <CardContent className="p-0">
-            <div className="bg-muted/30 px-4 py-2 border-b border-border/60 flex items-center justify-between">
-              <span className="text-sm font-medium text-foreground">
-                Live Transcript
-              </span>
-              <span className="text-xs text-muted-foreground">
-                Powered by Deepgram
-              </span>
-            </div>
-            <div className="p-6 min-h-[400px] max-h-[60vh] overflow-y-auto font-mono text-sm leading-relaxed">
-              {fullTranscript ? (
-                <div className="space-y-2">
-                  {fullTranscript.split("\n").map((line, i) => (
-                    <p key={i} className="text-foreground">
-                      {line}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Live transcript area */}
+          <Card className="shadow-sm border-border/60 lg:col-span-2">
+            <CardContent className="p-0">
+              <div className="bg-muted/30 px-4 py-2 border-b border-border/60 flex items-center justify-between">
+                <span className="text-sm font-medium text-foreground">
+                  Live Transcript
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  Powered by Deepgram
+                </span>
+              </div>
+              <div className="p-6 min-h-[400px] max-h-[60vh] overflow-y-auto font-mono text-sm leading-relaxed">
+                {fullTranscript ? (
+                  <div className="space-y-2">
+                    {fullTranscript.split("\n").map((line, i) => (
+                      <p key={i} className="text-foreground">
+                        {line}
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  !interimText && (
+                    <p className="text-muted-foreground/50 italic">
+                      Start speaking — your words will appear here in real
+                      time...
                     </p>
-                  ))}
-                </div>
-              ) : (
-                !interimText && (
-                  <p className="text-muted-foreground/50 italic">
-                    Start speaking — your words will appear here in real
-                    time...
+                  )
+                )}
+
+                {/* Interim (not yet confirmed) text */}
+                {interimText && (
+                  <p className="text-muted-foreground/60 italic mt-2">
+                    {interimText}
                   </p>
-                )
-              )}
+                )}
 
-              {/* Interim (not yet confirmed) text */}
-              {interimText && (
-                <p className="text-muted-foreground/60 italic mt-2">
-                  {interimText}
+                <div ref={transcriptEndRef} />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Checklist Panel - only show when case is selected */}
+          {selectedCaseId && computedChecklist && showChecklistPrompt && (
+            <Card className="shadow-lg border-amber-200 dark:border-amber-800 h-fit">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-medium text-foreground flex items-center gap-2">
+                    <AlertCircle className="w-5 h-5 text-amber-500" />
+                    Meeting Checklist
+                  </h3>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setShowChecklistPrompt(false)}
+                    className="h-6 w-6"
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+
+                <p className="text-xs text-muted-foreground mb-3">
+                  Updates automatically as you speak. Items with checkmarks have been covered.
                 </p>
-              )}
 
-              <div ref={transcriptEndRef} />
-            </div>
-          </CardContent>
-        </Card>
+                <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                  {computedChecklist.items.map(item => {
+                    const config = CATEGORY_CONFIG[item.category];
+                    return (
+                      <div 
+                        key={item.id}
+                        className={`p-2 rounded text-sm transition-all ${
+                          item.isCompleted 
+                            ? "bg-green-50 dark:bg-green-900/20" 
+                            : config.bgColor
+                        }`}
+                      >
+                        <div className="flex items-start gap-2">
+                          {item.isCompleted ? (
+                            <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
+                          ) : (
+                            <div className={`w-3 h-3 border-2 rounded flex-shrink-0 mt-1 ${config.iconColor} border-current`} />
+                          )}
+                          <span className={`flex-1 ${item.isCompleted ? "text-green-700 dark:text-green-300 line-through" : "text-foreground"}`}>
+                            {item.question}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-3 pt-3 border-t border-border/60">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs text-muted-foreground">
+                      Progress
+                    </p>
+                    <p className="text-xs font-medium">
+                      {computedChecklist.completedCount}/{computedChecklist.totalItems}
+                    </p>
+                  </div>
+                  <div className="w-full bg-muted rounded-full h-2">
+                    <div 
+                      className="bg-green-500 h-2 rounded-full transition-all duration-500" 
+                      style={{ width: `${computedChecklist.completedPercentage}%` }}
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Show message if no case selected */}
+          {!selectedCaseId && (
+            <Card className="shadow-sm border-border/60 h-fit">
+              <CardContent className="p-4 text-center text-muted-foreground">
+                <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                <p className="text-sm">No case selected</p>
+                <p className="text-xs mt-1">Link to a case in setup to see the checklist</p>
+              </CardContent>
+            </Card>
+          )}
+        </div>
       </div>
     );
   }
@@ -813,7 +946,7 @@ export default function XScribeMeetings() {
                     {computedChecklist.completedCount}/{computedChecklist.totalItems}
                   </Badge>
                 </div>
-                
+
                 {/* Progress bar */}
                 <div className="mb-4">
                   <div className="w-full bg-muted rounded-full h-2">
@@ -824,14 +957,14 @@ export default function XScribeMeetings() {
                   </div>
                   <p className="text-xs text-muted-foreground mt-1 text-right">{computedChecklist.completedPercentage}% complete</p>
                 </div>
-                
+
                 {(["critical", "important", "supplementary"] as const).map(category => {
                   const config = CATEGORY_CONFIG[category];
                   const items = computedChecklist.items.filter(i => i.category === category);
                   if (items.length === 0) return null;
-                  
+
                   const completedInCategory = items.filter(i => i.isCompleted).length;
-                  
+
                   return (
                     <div key={category} className="mb-4">
                       <h4 className={`text-xs font-medium uppercase tracking-wider mb-2 flex items-center justify-between ${config.color}`}>
@@ -842,7 +975,7 @@ export default function XScribeMeetings() {
                         {items.map(item => {
                           const isAutoCompleted = item.fieldMapping && item.isCompleted && !item.isManuallyCompleted;
                           const canToggle = !isAutoCompleted;
-                          
+
                           return (
                             <button 
                               key={item.id}

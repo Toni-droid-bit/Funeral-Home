@@ -1,8 +1,8 @@
+import { z } from "zod";
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
-import { z } from "zod";
 import { setupAuth, registerAuthRoutes } from "./replit_integrations/auth";
 import { registerAudioRoutes } from "./replit_integrations/audio";
 import { registerImageRoutes } from "./replit_integrations/image";
@@ -14,11 +14,11 @@ import { IntakeData, REQUIRED_INTAKE_FIELDS, intakeDataSchema, checklistTemplate
 // Helper to create or update intake summary document
 async function updateIntakeDocument(caseId: number, caseData: any, intakeData: IntakeData) {
   const content = generateIntakeDocument(caseData, intakeData);
-  
+
   // Check if intake summary document already exists
   const existingDocs = await storage.getDocumentsByCaseId(caseId);
   const intakeDoc = existingDocs.find((d: any) => d.type === "intake_summary");
-  
+
   if (intakeDoc) {
     // Update existing document
     await storage.updateDocument(intakeDoc.id, {
@@ -44,11 +44,11 @@ export async function registerRoutes(
   // Auth Setup
   await setupAuth(app);
   registerAuthRoutes(app);
-  
+
   // AI Integrations
   registerAudioRoutes(app);
   registerImageRoutes(app);
-  
+
   // Vapi.ai Voice Calling
   registerVapiRoutes(app);
 
@@ -69,7 +69,7 @@ export async function registerRoutes(
     if (!caseItem) {
       return res.status(404).json({ message: "Case not found" });
     }
-    
+
     // Fetch related data
     const calls = await storage.getCallsByCaseId(id);
     const meetings = await storage.getMeetingsByCaseId(id);
@@ -129,20 +129,20 @@ export async function registerRoutes(
     if (!caseItem) {
       return res.status(404).json({ message: "Case not found" });
     }
-    
+
     // Fetch related calls to show call history
     const calls = await storage.getCallsByCaseId(id);
-    
+
     const intakeData = (caseItem.intakeData as IntakeData) || {};
     const missingFields = (caseItem.missingFields as string[]) || calculateMissingFields(intakeData);
-    
+
     // Create labeled checklist
     const checklist = REQUIRED_INTAKE_FIELDS.map((field) => ({
       field,
       label: getFieldLabel(field),
       completed: !missingFields.includes(field),
     }));
-    
+
     res.json({
       caseId: caseItem.id,
       deceasedName: caseItem.deceasedName,
@@ -167,12 +167,12 @@ export async function registerRoutes(
     if (!caseItem) {
       return res.status(404).json({ message: "Case not found" });
     }
-    
+
     // Validate incoming intake data
     const { intakeData: newIntakeData } = req.body;
     const validatedNewData = validateIntakeData(newIntakeData || {});
     const existingIntake = (caseItem.intakeData as IntakeData) || {};
-    
+
     // Deep merge new data with existing
     const merged = {
       callerInfo: { ...existingIntake.callerInfo, ...validatedNewData.callerInfo },
@@ -180,15 +180,123 @@ export async function registerRoutes(
       servicePreferences: { ...existingIntake.servicePreferences, ...validatedNewData.servicePreferences },
       appointment: { ...existingIntake.appointment, ...validatedNewData.appointment },
     };
-    
+
     const missingFields = calculateMissingFields(merged);
-    
+
     const updated = await storage.updateCase(id, {
       intakeData: merged,
       missingFields,
     });
-    
+
     res.json(updated);
+  });
+
+  // Process transcript in real-time during recording to auto-update checklist
+  // This uses the existing parseMeetingTranscriptToIntake which returns properly structured data
+  app.post("/api/cases/:id/process-transcript", async (req, res) => {
+    try {
+      const caseId = Number(req.params.id);
+      const { transcript } = req.body;
+
+      if (!transcript || transcript.trim().length < 50) {
+        return res.status(400).json({ error: "Transcript too short to process" });
+      }
+
+      const caseData = await storage.getCase(caseId);
+      if (!caseData) {
+        return res.status(404).json({ error: "Case not found" });
+      }
+
+      // Use the existing intake parser which returns properly structured data
+      const extractedIntake = await parseMeetingTranscriptToIntake(transcript);
+
+      if (Object.keys(extractedIntake).length === 0) {
+        return res.json({
+          success: true,
+          extractedFields: [],
+          message: "No new information extracted",
+        });
+      }
+
+      // Merge with existing intake data
+      const currentIntakeData = (caseData.intakeData as IntakeData) || {};
+      const mergedIntakeData = mergeIntakeData(currentIntakeData, extractedIntake);
+      const missingFields = calculateMissingFields(mergedIntakeData);
+
+      // Update case
+      const updates: any = {
+        intakeData: mergedIntakeData,
+        missingFields,
+      };
+
+      // Update deceased name if extracted and current is placeholder
+      if (extractedIntake.deceasedInfo?.fullName &&
+        (caseData.deceasedName === "Unknown (Pending)" || !caseData.deceasedName)) {
+        updates.deceasedName = extractedIntake.deceasedInfo.fullName;
+      }
+
+      // Update religion if extracted
+      if (extractedIntake.servicePreferences?.religion &&
+        (caseData.religion === "Unknown" || !caseData.religion)) {
+        updates.religion = extractedIntake.servicePreferences.religion;
+      }
+
+      await storage.updateCase(caseId, updates);
+
+      // Count what was extracted
+      const extractedFields: string[] = [];
+      if (extractedIntake.callerInfo) {
+        Object.keys(extractedIntake.callerInfo).forEach(k => extractedFields.push(`callerInfo.${k}`));
+      }
+      if (extractedIntake.deceasedInfo) {
+        Object.keys(extractedIntake.deceasedInfo).forEach(k => extractedFields.push(`deceasedInfo.${k}`));
+      }
+      if (extractedIntake.servicePreferences) {
+        Object.keys(extractedIntake.servicePreferences).forEach(k => extractedFields.push(`servicePreferences.${k}`));
+      }
+      if (extractedIntake.appointment) {
+        Object.keys(extractedIntake.appointment).forEach(k => extractedFields.push(`appointment.${k}`));
+      }
+
+      res.json({
+        success: true,
+        extractedFields,
+        message: `Extracted ${extractedFields.length} fields from transcript`,
+      });
+    } catch (error: any) {
+      console.error("Error processing transcript:", error);
+      res.status(500).json({ error: "Failed to process transcript" });
+    }
+  });
+
+  // Update manual checklist value
+  app.post("/api/cases/:caseId/checklist/:itemId/update-value", async (req, res) => {
+    try {
+      const caseId = Number(req.params.caseId);
+      const itemId = req.params.itemId;
+      const { value } = req.body;
+
+      const caseData = await storage.getCase(caseId);
+      if (!caseData) {
+        return res.status(404).json({ error: "Case not found" });
+      }
+
+      // Get current checklist values
+      const checklistValues = (caseData.checklistValues as Record<string, string>) || {};
+
+      // Update the value for this item
+      checklistValues[itemId] = value;
+
+      // Save back to case
+      await storage.updateCase(caseId, {
+        checklistValues,
+      });
+
+      res.json({ success: true, itemId, value });
+    } catch (error: any) {
+      console.error("Error updating checklist value:", error);
+      res.status(500).json({ error: "Failed to update checklist value" });
+    }
   });
 
   // Generate documents from meeting transcript
@@ -203,17 +311,17 @@ export async function registerRoutes(
     if (!caseItem) {
       return res.status(404).json({ message: "Case not found" });
     }
-    
+
     // Validate request body
     const parseResult = generateDocsSchema.safeParse(req.body);
     if (!parseResult.success) {
       return res.status(400).json({ message: parseResult.error.errors[0].message });
     }
-    
+
     const { meetingId, documentTypes } = parseResult.data;
-    
+
     const generatedDocs: any[] = [];
-    
+
     for (const docType of documentTypes || ["contract"]) {
       const doc = await storage.createDocument({
         caseId: id,
@@ -225,7 +333,7 @@ export async function registerRoutes(
       });
       generatedDocs.push(doc);
     }
-    
+
     res.status(201).json({
       message: "Documents generated successfully",
       documents: generatedDocs,
@@ -313,20 +421,20 @@ export async function registerRoutes(
   app.post("/api/calls/:id/reprocess", async (req, res) => {
     const callId = Number(req.params.id);
     const call = await storage.getCall(callId);
-    
+
     if (!call) {
       return res.status(404).json({ message: "Call not found" });
     }
-    
+
     if (!call.transcript) {
       return res.status(400).json({ message: "Call has no transcript to process" });
     }
-    
+
     try {
       // Parse the transcript to extract intake data
       const intakeData = await parseCallTranscriptToIntake(call.transcript, call.summary || undefined);
       const missingFields = calculateMissingFields(intakeData);
-      
+
       if (call.caseId) {
         // Update existing case with new intake data
         const existingCase = await storage.getCase(call.caseId);
@@ -336,38 +444,38 @@ export async function registerRoutes(
             intakeData
           );
           const newMissingFields = calculateMissingFields(mergedIntake);
-          
+
           // Update case name if we extracted a better name
           const updates: any = {
             intakeData: mergedIntake,
             missingFields: newMissingFields,
           };
-          
+
           // Update deceased name if extracted and current is placeholder
-          if (intakeData.deceasedInfo?.fullName && 
-              (existingCase.deceasedName === "Unknown (Pending)" || !existingCase.deceasedName)) {
+          if (intakeData.deceasedInfo?.fullName &&
+            (existingCase.deceasedName === "Unknown (Pending)" || !existingCase.deceasedName)) {
             updates.deceasedName = intakeData.deceasedInfo.fullName;
           }
-          
+
           // Update religion if extracted
-          if (intakeData.servicePreferences?.religion && 
-              (existingCase.religion === "Unknown" || !existingCase.religion)) {
+          if (intakeData.servicePreferences?.religion &&
+            (existingCase.religion === "Unknown" || !existingCase.religion)) {
             updates.religion = intakeData.servicePreferences.religion;
           }
-          
+
           await storage.updateCase(call.caseId, updates);
-          
+
           // Generate and update intake document
           const updatedCase = await storage.getCase(call.caseId);
           if (updatedCase) {
             await updateIntakeDocument(call.caseId, updatedCase, mergedIntake);
           }
-          
-          res.json({ 
-            success: true, 
+
+          res.json({
+            success: true,
             message: "Call reprocessed and case updated",
             extractedData: intakeData,
-            caseId: call.caseId 
+            caseId: call.caseId
           });
         } else {
           res.status(404).json({ message: "Linked case not found" });
@@ -376,14 +484,14 @@ export async function registerRoutes(
         // Create a new case from the call
         const deceasedName = intakeData.deceasedInfo?.fullName || "Unknown (Pending)";
         const religion = intakeData.servicePreferences?.religion || "Unknown";
-        
+
         const homes = await storage.getFuneralHomes();
         const defaultHomeId = homes[0]?.id || null;
-        
+
         const newCase = await storage.createCase({
           deceasedName,
-          dateOfDeath: intakeData.deceasedInfo?.dateOfDeath 
-            ? new Date(intakeData.deceasedInfo.dateOfDeath) 
+          dateOfDeath: intakeData.deceasedInfo?.dateOfDeath
+            ? new Date(intakeData.deceasedInfo.dateOfDeath)
             : null,
           status: "active",
           religion,
@@ -393,18 +501,18 @@ export async function registerRoutes(
           intakeData,
           missingFields,
         });
-        
+
         // Link call to the new case
         await storage.updateCall(callId, { caseId: newCase.id });
-        
+
         // Create intake document for the new case
         await updateIntakeDocument(newCase.id, newCase, intakeData);
-        
-        res.json({ 
-          success: true, 
+
+        res.json({
+          success: true,
           message: "Call reprocessed and new case created",
           extractedData: intakeData,
-          caseId: newCase.id 
+          caseId: newCase.id
         });
       }
     } catch (error: any) {
@@ -417,25 +525,25 @@ export async function registerRoutes(
   app.post("/api/meetings/:id/reprocess", async (req, res) => {
     const meetingId = Number(req.params.id);
     const meeting = await storage.getMeeting(meetingId);
-    
+
     if (!meeting) {
       return res.status(404).json({ message: "Meeting not found" });
     }
-    
+
     if (!meeting.transcript) {
       return res.status(400).json({ message: "Meeting has no transcript to process" });
     }
-    
+
     try {
       // Parse the meeting transcript to extract intake data
       const actionItems = Array.isArray(meeting.actionItems) ? meeting.actionItems as string[] : [];
       const intakeData = await parseMeetingTranscriptToIntake(
-        meeting.transcript, 
+        meeting.transcript,
         meeting.summary || undefined,
         actionItems
       );
       const missingFields = calculateMissingFields(intakeData);
-      
+
       if (meeting.caseId) {
         // Update existing case with new intake data
         const existingCase = await storage.getCase(meeting.caseId);
@@ -445,37 +553,37 @@ export async function registerRoutes(
             intakeData
           );
           const newMissingFields = calculateMissingFields(mergedIntake);
-          
+
           const updates: any = {
             intakeData: mergedIntake,
             missingFields: newMissingFields,
           };
-          
+
           // Update deceased name if extracted and current is placeholder
-          if (intakeData.deceasedInfo?.fullName && 
-              (existingCase.deceasedName === "Unknown (Pending)" || !existingCase.deceasedName)) {
+          if (intakeData.deceasedInfo?.fullName &&
+            (existingCase.deceasedName === "Unknown (Pending)" || !existingCase.deceasedName)) {
             updates.deceasedName = intakeData.deceasedInfo.fullName;
           }
-          
+
           // Update religion if extracted
-          if (intakeData.servicePreferences?.religion && 
-              (existingCase.religion === "Unknown" || !existingCase.religion)) {
+          if (intakeData.servicePreferences?.religion &&
+            (existingCase.religion === "Unknown" || !existingCase.religion)) {
             updates.religion = intakeData.servicePreferences.religion;
           }
-          
+
           await storage.updateCase(meeting.caseId, updates);
-          
+
           // Generate and update intake document
           const updatedCase = await storage.getCase(meeting.caseId);
           if (updatedCase) {
             await updateIntakeDocument(meeting.caseId, updatedCase, mergedIntake);
           }
-          
-          res.json({ 
-            success: true, 
+
+          res.json({
+            success: true,
             message: "Meeting reprocessed and case updated",
             extractedData: intakeData,
-            caseId: meeting.caseId 
+            caseId: meeting.caseId
           });
         } else {
           res.status(404).json({ message: "Linked case not found" });
@@ -496,20 +604,21 @@ export async function registerRoutes(
     if (!caseItem) {
       return res.status(404).json({ message: "Case not found" });
     }
-    
+
     const template = await storage.getDefaultChecklistTemplate();
     if (!template) {
       return res.status(404).json({ message: "No default checklist template found" });
     }
-    
+
     const intakeData = (caseItem.intakeData as IntakeData) || {};
     const completedItems = (caseItem.checklistCompletedItems as string[]) || [];
+    const checklistValues = (caseItem.checklistValues as Record<string, string>) || {};
     const items = template.items as ChecklistItem[];
-    
+
     // Compute completion status for each item
     const computedChecklist = items.map(item => {
       let isCompleted = false;
-      
+
       // Check if manually marked complete
       if (completedItems.includes(item.id)) {
         isCompleted = true;
@@ -519,17 +628,18 @@ export async function registerRoutes(
         const value = item.fieldMapping.split('.').reduce((obj: any, key) => obj?.[key], intakeData);
         isCompleted = Boolean(value);
       }
-      
+
       return {
         ...item,
         isCompleted,
         isManuallyCompleted: completedItems.includes(item.id),
+        manualValue: checklistValues[item.id] || undefined,
       };
     });
-    
+
     const totalItems = computedChecklist.length;
     const completedCount = computedChecklist.filter(i => i.isCompleted).length;
-    
+
     res.json({
       caseId: id,
       templateId: template.id,
@@ -545,24 +655,24 @@ export async function registerRoutes(
   app.post("/api/cases/:id/checklist/:itemId/toggle", async (req, res) => {
     const caseId = Number(req.params.id);
     const itemId = req.params.itemId;
-    
+
     const caseItem = await storage.getCase(caseId);
     if (!caseItem) {
       return res.status(404).json({ message: "Case not found" });
     }
-    
+
     // Get template to verify item exists and check if it has fieldMapping
     const template = await storage.getDefaultChecklistTemplate();
     if (!template) {
       return res.status(404).json({ message: "No default checklist template found" });
     }
-    
+
     const items = template.items as ChecklistItem[];
     const item = items.find(i => i.id === itemId);
     if (!item) {
       return res.status(404).json({ message: "Checklist item not found" });
     }
-    
+
     // For items with fieldMapping, only allow manual marking as complete if intake field is empty
     // For custom items (no fieldMapping), always allow toggling
     const intakeData = (caseItem.intakeData as IntakeData) || {};
@@ -570,76 +680,76 @@ export async function registerRoutes(
       const value = item.fieldMapping.split('.').reduce((obj: any, key) => obj?.[key], intakeData);
       if (Boolean(value)) {
         // Field already has data, don't allow manual override
-        return res.status(400).json({ 
-          message: "This item is auto-completed based on intake data and cannot be manually toggled" 
+        return res.status(400).json({
+          message: "This item is auto-completed based on intake data and cannot be manually toggled"
         });
       }
     }
-    
+
     const completedItems = (caseItem.checklistCompletedItems as string[]) || [];
     let newCompletedItems: string[];
-    
+
     if (completedItems.includes(itemId)) {
       newCompletedItems = completedItems.filter(id => id !== itemId);
     } else {
       newCompletedItems = [...completedItems, itemId];
     }
-    
+
     await storage.updateCase(caseId, { checklistCompletedItems: newCompletedItems });
-    
+
     res.json({ itemId, isCompleted: newCompletedItems.includes(itemId) });
   });
 
-  // Generate Intake Summary Document
+  // Generate Intake Summary Document (plain text, no markdown)
   app.post("/api/cases/:id/generate-intake-summary", async (req, res) => {
     const caseId = Number(req.params.id);
-    
+
     const caseItem = await storage.getCase(caseId);
     if (!caseItem) {
       return res.status(404).json({ message: "Case not found" });
     }
-    
+
     const intakeData = (caseItem.intakeData as IntakeData) || {};
     const template = await storage.getDefaultChecklistTemplate();
     const items = (template?.items as ChecklistItem[]) || [];
     const completedItems = (caseItem.checklistCompletedItems as string[]) || [];
-    
-    // Build the intake summary document content
+
+    // Build the intake summary document content (plain text)
     const sections: string[] = [];
-    
+
     // Header
-    sections.push(`# Intake Summary: ${caseItem.deceasedName}`);
-    sections.push(`**Case ID:** ${caseItem.id}`);
-    sections.push(`**Generated:** ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`);
-    sections.push(`**Status:** ${caseItem.status}`);
+    sections.push(`INTAKE SUMMARY: ${caseItem.deceasedName}`);
+    sections.push(`Case ID: ${caseItem.id}`);
+    sections.push(`Generated: ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`);
+    sections.push(`Status: ${caseItem.status}`);
     sections.push('');
-    
+
     // Deceased Information
-    sections.push('## Deceased Information');
-    sections.push(`- **Full Legal Name:** ${intakeData.deceasedInfo?.fullName || caseItem.deceasedName || 'Not provided'}`);
-    sections.push(`- **Date of Birth:** ${intakeData.deceasedInfo?.dateOfBirth || 'Not provided'}`);
-    sections.push(`- **Date of Death:** ${caseItem.dateOfDeath ? new Date(caseItem.dateOfDeath).toLocaleDateString() : (intakeData.deceasedInfo?.dateOfDeath || 'Not provided')}`);
-    sections.push(`- **Current Location:** ${intakeData.deceasedInfo?.currentLocation || 'Not provided'}`);
-    sections.push(`- **Religion:** ${caseItem.religion || 'Not specified'}`);
-    sections.push(`- **Language:** ${caseItem.language || 'English'}`);
+    sections.push('DECEASED INFORMATION');
+    sections.push(`Full Legal Name: ${intakeData.deceasedInfo?.fullName || caseItem.deceasedName || 'Not provided'}`);
+    sections.push(`Date of Birth: ${intakeData.deceasedInfo?.dateOfBirth || 'Not provided'}`);
+    sections.push(`Date of Death: ${caseItem.dateOfDeath ? new Date(caseItem.dateOfDeath).toLocaleDateString() : (intakeData.deceasedInfo?.dateOfDeath || 'Not provided')}`);
+    sections.push(`Current Location: ${intakeData.deceasedInfo?.currentLocation || 'Not provided'}`);
+    sections.push(`Religion: ${caseItem.religion || 'Not specified'}`);
+    sections.push(`Language: ${caseItem.language || 'English'}`);
     sections.push('');
-    
+
     // Next of Kin / Contact Information
-    sections.push('## Contact Information');
-    sections.push(`- **Primary Contact:** ${intakeData.callerInfo?.name || 'Not provided'}`);
-    sections.push(`- **Phone:** ${intakeData.callerInfo?.phone || 'Not provided'}`);
-    sections.push(`- **Relationship:** ${intakeData.callerInfo?.relationship || 'Not provided'}`);
-    sections.push(`- **Email:** ${intakeData.callerInfo?.email || 'Not provided'}`);
+    sections.push('CONTACT INFORMATION');
+    sections.push(`Primary Contact: ${intakeData.callerInfo?.name || 'Not provided'}`);
+    sections.push(`Phone: ${intakeData.callerInfo?.phone || 'Not provided'}`);
+    sections.push(`Relationship: ${intakeData.callerInfo?.relationship || 'Not provided'}`);
+    sections.push(`Email: ${intakeData.callerInfo?.email || 'Not provided'}`);
     sections.push('');
-    
+
     // Service Preferences
-    sections.push('## Service Preferences');
-    sections.push(`- **Service Type:** ${intakeData.servicePreferences?.serviceType || 'Not specified'}`);
-    sections.push(`- **Burial or Cremation:** ${intakeData.servicePreferences?.burialOrCremation || 'Not specified'}`);
-    sections.push(`- **Religion:** ${intakeData.servicePreferences?.religion || 'Not specified'}`);
-    sections.push(`- **Urgency:** ${intakeData.servicePreferences?.urgency || 'Not specified'}`);
+    sections.push('SERVICE PREFERENCES');
+    sections.push(`Service Type: ${intakeData.servicePreferences?.serviceType || 'Not specified'}`);
+    sections.push(`Burial or Cremation: ${intakeData.servicePreferences?.burialOrCremation || 'Not specified'}`);
+    sections.push(`Religion: ${intakeData.servicePreferences?.religion || 'Not specified'}`);
+    sections.push(`Urgency: ${intakeData.servicePreferences?.urgency || 'Not specified'}`);
     sections.push('');
-    
+
     // Checklist Status
     const completedCount = items.filter(item => {
       if (completedItems.includes(item.id)) return true;
@@ -649,56 +759,56 @@ export async function registerRoutes(
       }
       return false;
     }).length;
-    
-    sections.push('## Checklist Progress');
-    sections.push(`**Completed:** ${completedCount} of ${items.length} items (${items.length > 0 ? Math.round((completedCount / items.length) * 100) : 0}%)`);
+
+    sections.push('CHECKLIST PROGRESS');
+    sections.push(`Completed: ${completedCount} of ${items.length} items (${items.length > 0 ? Math.round((completedCount / items.length) * 100) : 0}%)`);
     sections.push('');
-    
+
     // Group items by category
     const categoryGroups = { critical: [] as string[], important: [] as string[], supplementary: [] as string[] };
-    
+
     items.forEach(item => {
       let isCompleted = completedItems.includes(item.id);
       if (!isCompleted && item.fieldMapping) {
         const value = item.fieldMapping.split('.').reduce((obj: any, key) => obj?.[key], intakeData);
         isCompleted = Boolean(value);
       }
-      
+
       const status = isCompleted ? '[x]' : '[ ]';
       const line = `${status} ${item.question}`;
-      
+
       if (item.category === 'critical') categoryGroups.critical.push(line);
       else if (item.category === 'important') categoryGroups.important.push(line);
       else categoryGroups.supplementary.push(line);
     });
-    
+
     if (categoryGroups.critical.length > 0) {
-      sections.push('### Critical Items');
+      sections.push('CRITICAL ITEMS');
       sections.push(...categoryGroups.critical);
       sections.push('');
     }
-    
+
     if (categoryGroups.important.length > 0) {
-      sections.push('### Important Items');
+      sections.push('IMPORTANT ITEMS');
       sections.push(...categoryGroups.important);
       sections.push('');
     }
-    
+
     if (categoryGroups.supplementary.length > 0) {
-      sections.push('### Supplementary Items');
+      sections.push('SUPPLEMENTARY ITEMS');
       sections.push(...categoryGroups.supplementary);
       sections.push('');
     }
-    
+
     // Additional Notes
     if (caseItem.notes) {
-      sections.push('## Additional Notes');
+      sections.push('ADDITIONAL NOTES');
       sections.push(caseItem.notes);
       sections.push('');
     }
-    
+
     const content = sections.join('\n');
-    
+
     // Create the document in the database
     const document = await storage.createDocument({
       caseId,
@@ -706,7 +816,7 @@ export async function registerRoutes(
       title: `Intake Summary - ${caseItem.deceasedName}`,
       content,
     });
-    
+
     res.status(201).json(document);
   });
 
@@ -745,7 +855,7 @@ export async function registerRoutes(
     if (!parseResult.success) {
       return res.status(400).json({ message: parseResult.error.errors[0].message });
     }
-    
+
     const template = await storage.createChecklistTemplate(parseResult.data);
     res.status(201).json(template);
   });
@@ -756,12 +866,12 @@ export async function registerRoutes(
     if (!existing) {
       return res.status(404).json({ message: "Template not found" });
     }
-    
+
     const parseResult = checklistTemplateSchema.partial().safeParse(req.body);
     if (!parseResult.success) {
       return res.status(400).json({ message: parseResult.error.errors[0].message });
     }
-    
+
     const template = await storage.updateChecklistTemplate(id, parseResult.data);
     res.json(template);
   });
@@ -772,7 +882,7 @@ export async function registerRoutes(
     if (!existing) {
       return res.status(404).json({ message: "Template not found" });
     }
-    
+
     await storage.deleteChecklistTemplate(id);
     res.status(204).send();
   });
@@ -794,20 +904,20 @@ const DEFAULT_CHECKLIST_ITEMS: ChecklistItem[] = [
   { id: "c6", question: "Service type (burial or cremation)", category: "critical", fieldMapping: "servicePreferences.burialOrCremation", isCustom: false },
   { id: "c7", question: "Service date/time (or at least week)", category: "critical", fieldMapping: "appointment.preferredDate", isCustom: false },
   { id: "c8", question: "Payment responsibility confirmed", category: "critical", isCustom: false },
-  
+
   // Important - Should Confirm
-  { id: "i1", question: "Cemetery/crematorium selection", category: "important", isCustom: false },
-  { id: "i2", question: "Clothing for deceased", category: "important", isCustom: false },
-  { id: "i3", question: "Obituary information (birthplace, family, achievements)", category: "important", isCustom: false },
-  { id: "i4", question: "Flower preferences", category: "important", isCustom: false },
-  { id: "i5", question: "Music selections", category: "important", isCustom: false },
+  { id: "i1", question: "Cemetery/crematorium selection", category: "important", fieldMapping: "servicePreferences.cemeteryOrCrematorium", isCustom: false },
+  { id: "i2", question: "Clothing for deceased", category: "important", fieldMapping: "servicePreferences.clothing", isCustom: false },
+  { id: "i3", question: "Obituary information (birthplace, family, achievements)", category: "important", fieldMapping: "servicePreferences.obituary", isCustom: false },
+  { id: "i4", question: "Flower preferences", category: "important", fieldMapping: "servicePreferences.flowers", isCustom: false },
+  { id: "i5", question: "Music selections", category: "important", fieldMapping: "servicePreferences.music", isCustom: false },
   { id: "i6", question: "Viewing/visitation preferences", category: "important", isCustom: false },
-  
+
   // Supplementary - Can Follow Up
-  { id: "s1", question: "Specific readings or poems", category: "supplementary", isCustom: false },
+  { id: "s1", question: "Specific readings or poems", category: "supplementary", fieldMapping: "servicePreferences.readings", isCustom: false },
   { id: "s2", question: "Photo selections", category: "supplementary", isCustom: false },
-  { id: "s3", question: "Reception catering details", category: "supplementary", isCustom: false },
-  { id: "s4", question: "Memorial donations organization", category: "supplementary", isCustom: false },
+  { id: "s3", question: "Reception catering details", category: "supplementary", fieldMapping: "servicePreferences.reception", isCustom: false },
+  { id: "s4", question: "Memorial donations organization", category: "supplementary", fieldMapping: "servicePreferences.donations", isCustom: false },
 ];
 
 async function seedDatabase() {
