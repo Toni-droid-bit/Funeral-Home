@@ -289,12 +289,7 @@ export async function registerRoutes(
       const checkSection = (section: any, prefix: string) => {
         if (section) Object.keys(section).forEach(k => { if ((section as any)[k]) extractedFields.push(`${prefix}.${k}`); });
       };
-      if (extractedIntake.callerInfo) {
-        Object.keys(extractedIntake.callerInfo).forEach(k => extractedFields.push(`callerInfo.${k}`));
-      }
-      if (extractedIntake.deceasedInfo) {
-        Object.keys(extractedIntake.deceasedInfo).forEach(k => extractedFields.push(`deceasedInfo.${k}`));
-      }
+      checkSection(extractedIntake.callerInfo, "callerInfo");
       checkSection(extractedIntake.deceasedInfo, "deceasedInfo");
       checkSection(extractedIntake.servicePreferences, "servicePreferences");
       checkSection(extractedIntake.funeralService, "funeralService");
@@ -305,7 +300,6 @@ export async function registerRoutes(
       checkSection(extractedIntake.donations, "donations");
       checkSection(extractedIntake.onlineTribute, "onlineTribute");
       checkSection(extractedIntake.newspaperNotices, "newspaperNotices");
-      checkSection(extractedIntake.appointment, "appointment");
 
       res.json({
         success: true,
