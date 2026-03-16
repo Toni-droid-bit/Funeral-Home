@@ -283,6 +283,7 @@ export async function registerRoutes(
       }
 
       await storage.updateCase(caseId, updates);
+      console.log(`[process-transcript] case=${caseId} extracted: deceased="${extractedIntake.deceasedInfo?.fullName ?? 'null'}", caller="${extractedIntake.callerInfo?.name ?? 'null'}", religion="${extractedIntake.deceasedInfo?.religion ?? 'null'}", phone="${extractedIntake.callerInfo?.phone ?? 'null'}"`);
 
       // Count what was extracted (all sections)
       const extractedFields: string[] = [];
@@ -335,20 +336,19 @@ export async function registerRoutes(
       if (item.fieldMapping) {
         // Save value directly to intakeData via the fieldMapping path (e.g. "deceasedInfo.fullName")
         const parts = item.fieldMapping.split('.');
-        if (parts.length >= 2) {
-          const existingIntake = (caseData.intakeData as IntakeData) || {};
-          // Build a nested fragment matching the path
-          const fragment: any = {};
-          let cursor = fragment;
-          for (let i = 0; i < parts.length - 1; i++) {
-            cursor[parts[i]] = {};
-            cursor = cursor[parts[i]];
-          }
-          cursor[parts[parts.length - 1]] = value;
-          const merged = mergeIntakeData(existingIntake, validateIntakeData(fragment));
-          updates.intakeData = merged;
-          updates.missingFields = calculateMissingFields(merged);
+        const existingIntake = (caseData.intakeData as IntakeData) || {};
+        // Build a nested fragment matching the path (works for 1-part top-level fields too)
+        const fragment: any = {};
+        let cursor = fragment;
+        for (let i = 0; i < parts.length - 1; i++) {
+          cursor[parts[i]] = {};
+          cursor = cursor[parts[i]];
         }
+        cursor[parts[parts.length - 1]] = value;
+        const merged = mergeIntakeData(existingIntake, validateIntakeData(fragment));
+        updates.intakeData = merged;
+        updates.missingFields = calculateMissingFields(merged);
+        console.log(`[update-value] case=${caseId} item=${itemId} path=${item.fieldMapping} value="${value}" → merged keys: ${Object.keys(merged).join(', ')}`);
       } else {
         // Custom item (no fieldMapping) — auto-check when a value is typed
         const completedItems = (caseData.checklistCompletedItems as string[]) || [];

@@ -215,11 +215,32 @@ export default function CaseDetail() {
   });
 
   const updateChecklistValueMutation = useMutation({
-    mutationFn: async ({ itemId, value }: { itemId: string; value: string }) => {
+    mutationFn: async ({ itemId, value, fieldMapping: _fm }: { itemId: string; value: string; fieldMapping?: string }) => {
       return apiRequest("POST", `/api/cases/${caseId}/checklist/${itemId}/update-value`, { value });
     },
-    onSuccess: () => {
-      // Invalidate immediately — the endpoint is synchronous, no delay needed.
+    onSuccess: (_, { value, fieldMapping }) => {
+      // Optimistically update the case cache so the tick turns green immediately without
+      // waiting for a background refetch.
+      if (fieldMapping) {
+        const cacheKey = ["/api/cases/:id", caseId];
+        const current = queryClient.getQueryData<any>(cacheKey);
+        if (current) {
+          const parts = fieldMapping.split('.');
+          const updatedIntake = JSON.parse(JSON.stringify(current.intakeData || {}));
+          let cursor = updatedIntake;
+          for (let i = 0; i < parts.length - 1; i++) {
+            if (!cursor[parts[i]]) cursor[parts[i]] = {};
+            cursor = cursor[parts[i]];
+          }
+          if (value) {
+            cursor[parts[parts.length - 1]] = value;
+          } else {
+            delete cursor[parts[parts.length - 1]];
+          }
+          queryClient.setQueryData(cacheKey, { ...current, intakeData: updatedIntake });
+        }
+      }
+      // Background invalidation to sync with server
       queryClient.invalidateQueries({ queryKey: ["/api/cases", caseId, "checklist"] });
       queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", caseId] });
       toast({ title: "Saved", description: "Checklist field updated." });
@@ -665,7 +686,7 @@ export default function CaseDetail() {
                                     {item.fieldMapping ? (
                                       <ChecklistValueInput
                                         currentValue={currentValue}
-                                        onSave={(value) => updateChecklistValueMutation.mutate({ itemId: item.id, value })}
+                                        onSave={(value) => updateChecklistValueMutation.mutate({ itemId: item.id, value, fieldMapping: item.fieldMapping })}
                                       />
                                     ) : (
                                       isAutoCompleted && (

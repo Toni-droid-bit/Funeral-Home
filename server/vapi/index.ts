@@ -289,6 +289,8 @@ export function registerVapiRoutes(app: Express) {
             await storage.updateCall(localCall.id, { callerName: extractedCallerName }).catch(() => {});
           }
 
+          console.log(`[vapi] extracted intakeData for call ${localCall.id}:`, JSON.stringify(intakeData, null, 2));
+
           if (localCall.caseId) {
             // ── Update existing linked case ──────────────────────────────
             const existingCase = await storage.getCase(localCall.caseId).catch(() => null);
@@ -308,8 +310,8 @@ export function registerVapiRoutes(app: Express) {
                 updates.religion = intakeData.servicePreferences.religion;
               }
 
-              await storage.updateCase(localCall.caseId, updates);
-              console.log(`[vapi] updated case ${localCall.caseId} — ${newMissing.length} fields still missing`);
+              const savedCase = await storage.updateCase(localCall.caseId, updates);
+              console.log(`[vapi] saved intakeData to case ${localCall.caseId} — deceasedName: "${savedCase.deceasedName}", intakeData keys: ${Object.keys(savedCase.intakeData as any || {}).join(', ')}, ${newMissing.length} fields still missing`);
             }
           } else {
             // ── Match or create case from call ───────────────────────────
