@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useCase } from "@/hooks/use-cases";
 import { useParams, useLocation } from "wouter";
 import { StatusBadge } from "@/components/status-badge";
@@ -57,27 +57,43 @@ function ChecklistValueInput({
   onSave: (value: string) => void;
 }) {
   const [draft, setDraft] = useState(currentValue);
+  // Track whether we already fired onSave for the current draft to avoid a
+  // double-save when Enter is pressed (Enter fires → then blur fires too).
+  const pendingSaveRef = useRef(false);
 
-  // Keep draft in sync when external value changes (after save)
+  // Keep draft in sync when the server value changes after a successful save.
   useEffect(() => {
     setDraft(currentValue);
+    pendingSaveRef.current = false;
   }, [currentValue]);
-
-  const handleSave = () => {
-    if (draft !== currentValue) {
-      onSave(draft);
-    }
-  };
 
   return (
     <input
       type="text"
       value={draft}
-      onChange={e => setDraft(e.target.value)}
-      onBlur={handleSave}
+      onChange={e => {
+        setDraft(e.target.value);
+        pendingSaveRef.current = false;
+      }}
+      onBlur={() => {
+        // Only save on blur if the value has changed and we haven't already
+        // saved it via the Enter key in the same interaction.
+        if (!pendingSaveRef.current && draft !== currentValue) {
+          pendingSaveRef.current = true;
+          onSave(draft);
+        }
+      }}
       onKeyDown={e => {
-        if (e.key === "Enter") { e.preventDefault(); handleSave(); }
-        if (e.key === "Escape") setDraft(currentValue);
+        if (e.key === "Enter") {
+          e.preventDefault();
+          // Always save on explicit Enter press so the user gets feedback.
+          pendingSaveRef.current = true;
+          onSave(draft);
+        }
+        if (e.key === "Escape") {
+          setDraft(currentValue);
+          pendingSaveRef.current = false;
+        }
       }}
       placeholder="Enter value..."
       className="text-xs border border-input rounded px-2 py-0.5 w-40 bg-background focus:outline-none focus:ring-1 focus:ring-primary flex-shrink-0"
@@ -134,6 +150,7 @@ export default function CaseDetail() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", caseId] });
       queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+      // Also refresh checklist so isCompleted ticks reflect latest intakeData
       queryClient.invalidateQueries({ queryKey: ["/api/cases", caseId, "checklist"] });
     },
     onError: () => {
@@ -201,11 +218,10 @@ export default function CaseDetail() {
       return apiRequest("POST", `/api/cases/${caseId}/checklist/${itemId}/update-value`, { value });
     },
     onSuccess: () => {
-      // 2-second delay so the backend has time to finish regenerating the summary document
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ["/api/cases", caseId, "checklist"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", caseId] });
-      }, 2000);
+      // Invalidate immediately — the endpoint is synchronous, no delay needed.
+      queryClient.invalidateQueries({ queryKey: ["/api/cases", caseId, "checklist"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", caseId] });
+      toast({ title: "Saved", description: "Checklist field updated." });
     },
     onError: () => {
       toast({ title: "Save failed", description: "Could not save checklist value.", variant: "destructive" });
@@ -568,22 +584,24 @@ export default function CaseDetail() {
                             </h4>
                             <div className="space-y-1">
                               {items.map(item => {
-                                const isAutoCompleted = item.fieldMapping && item.isCompleted && !item.isManuallyCompleted;
-                                const canToggle = !item.fieldMapping && !isAutoCompleted;
+                                // For field-mapped items, compute isCompleted directly from the local
+                                // intakeData so the tick is always in sync — even when the checklist
+                                // server query is stale (e.g. after transcript parsing updates intakeData).
+                                const currentValue = item.fieldMapping
+                                  ? (item.fieldMapping.split('.').reduce((obj: any, key) => obj?.[key], intake) || "")
+                                  : "";
+                                const isCompleted = item.fieldMapping
+                                  ? Boolean(currentValue)
+                                  : item.isCompleted;
 
-                                // Get the current value from intakeData via fieldMapping
-                                const getCurrentFieldValue = () => {
-                                  if (!item.fieldMapping) return "";
-                                  const parts = item.fieldMapping.split('.');
-                                  return parts.reduce((obj: any, key) => obj?.[key], intake) || "";
-                                };
-                                const currentValue = getCurrentFieldValue();
+                                const isAutoCompleted = item.fieldMapping && isCompleted && !item.isManuallyCompleted;
+                                const canToggle = !item.fieldMapping && !isAutoCompleted;
 
                                 return (
                                   <div
                                     key={item.id}
                                     className={`flex items-start gap-2 p-2 rounded text-sm w-full transition-colors ${
-                                      item.isCompleted
+                                      isCompleted
                                         ? "bg-green-50 dark:bg-green-900/20"
                                         : config.bgColor
                                     }`}
@@ -595,7 +613,7 @@ export default function CaseDetail() {
                                       disabled={toggleChecklistMutation.isPending || !canToggle}
                                       className={`flex-shrink-0 mt-0.5 ${canToggle ? "cursor-pointer hover:opacity-70" : "cursor-default"}`}
                                     >
-                                      {item.isCompleted ? (
+                                      {isCompleted ? (
                                         <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400" />
                                       ) : (
                                         <div className={`w-4 h-4 border-2 rounded ${config.iconColor} border-current`} />
@@ -603,7 +621,7 @@ export default function CaseDetail() {
                                     </button>
 
                                     {/* Question label */}
-                                    <span className={`flex-1 min-w-0 ${item.isCompleted ? "text-green-700 dark:text-green-300" : "text-foreground"}`}>
+                                    <span className={`flex-1 min-w-0 ${isCompleted ? "text-green-700 dark:text-green-300" : "text-foreground"}`}>
                                       {item.question}
                                     </span>
 
