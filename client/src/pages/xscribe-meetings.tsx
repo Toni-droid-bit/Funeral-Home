@@ -182,8 +182,8 @@ export default function XScribeMeetings() {
       return res.json();
     },
     enabled: !!selectedCaseId && (mode === "review" || mode === "recording"),
-    // Refresh every 3 seconds during recording — checklist updates in real time
-    refetchInterval: mode === "recording" ? 3000 : false,
+    // Refresh every 5 seconds during recording — checklist updates in real time
+    refetchInterval: mode === "recording" ? 5000 : false,
   });
 
   const toggleChecklistMutation = useMutation({
@@ -225,8 +225,8 @@ export default function XScribeMeetings() {
   // Process transcript in real-time to update checklist
   const processTranscriptMutation = useMutation({
     mutationFn: async (transcript: string) => {
-      return apiRequest("POST", `/api/cases/${selectedCaseId}/process-transcript`, { 
-        transcript 
+      return apiRequest("POST", `/api/cases/${selectedCaseId}/process-transcript`, {
+        transcript
       });
     },
     onSuccess: () => {
@@ -238,7 +238,23 @@ export default function XScribeMeetings() {
     },
   });
 
-  // Auto-process transcript every 3 seconds during recording — skip if already in-flight
+  // Extract data from transcript (manual trigger in review mode)
+  const extractDataMutation = useMutation({
+    mutationFn: async (transcript: string) => {
+      return apiRequest("POST", `/api/cases/${selectedCaseId}/process-transcript`, { transcript });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/cases", selectedCaseId, "checklist"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+      refetchChecklist();
+      toast({ title: "Data extracted", description: "Checklist updated from transcript." });
+    },
+    onError: () => {
+      toast({ title: "Extraction failed", description: "Could not parse transcript.", variant: "destructive" });
+    },
+  });
+
+  // Auto-process transcript every 5 seconds during recording — skip if already in-flight
   useEffect(() => {
     if (mode === "recording" && selectedCaseId && fullTranscript && fullTranscript.length > 50) {
       const interval = setInterval(() => {
@@ -247,7 +263,7 @@ export default function XScribeMeetings() {
           processTranscriptMutation.mutate(fullTranscript);
           setTimeout(() => setIsProcessingTranscript(false), 1500);
         }
-      }, 3000); // Every 3 seconds
+      }, 5000); // Every 5 seconds
 
       return () => clearInterval(interval);
     }
@@ -1206,6 +1222,25 @@ export default function XScribeMeetings() {
           {selectedCaseId && (
             <Button
               variant="outline"
+              onClick={() => extractDataMutation.mutate(editableTranscript)}
+              disabled={extractDataMutation.isPending || !editableTranscript.trim()}
+              className="px-6 py-5"
+            >
+              {extractDataMutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Extracting...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 mr-2" /> Extract Data
+                </>
+              )}
+            </Button>
+          )}
+
+          {selectedCaseId && (
+            <Button
+              variant="outline"
               onClick={() => generateDocsMutation.mutate(parseInt(selectedCaseId))}
               disabled={generateDocsMutation.isPending || !editableTranscript.trim()}
               className="px-6 py-5"
@@ -1226,11 +1261,7 @@ export default function XScribeMeetings() {
           <Button
             variant="outline"
             onClick={() => {
-              if (
-                confirm(
-                  "Are you sure you want to discard this transcript?"
-                )
-              ) {
+              if (confirm("Are you sure you want to discard this transcript?")) {
                 resetState();
               }
             }}
@@ -1239,6 +1270,60 @@ export default function XScribeMeetings() {
             <Trash2 className="w-4 h-4 mr-2" /> Discard
           </Button>
         </div>
+
+        {/* What's Next — missing critical items */}
+        {selectedCaseId && computedChecklist && (() => {
+          const missingCritical = computedChecklist.items.filter(i => i.category === "critical" && !i.isCompleted);
+          const missingImportant = computedChecklist.items.filter(i => i.category === "important" && !i.isCompleted);
+          if (missingCritical.length === 0 && missingImportant.length === 0) return (
+            <div className="rounded-lg border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 p-4">
+              <div className="flex items-center gap-2 text-green-700 dark:text-green-300 font-semibold">
+                <CheckCircle2 className="w-5 h-5" />
+                All critical and important items have been captured!
+              </div>
+              <p className="text-sm text-green-600 dark:text-green-400 mt-1 ml-7">
+                Save this meeting to preserve the transcript and update the case.
+              </p>
+            </div>
+          );
+          return (
+            <div className="rounded-lg border border-border bg-muted/20 p-4">
+              <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-500" />
+                What's Next
+              </h3>
+              {missingCritical.length > 0 && (
+                <div className="mb-3">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-red-600 dark:text-red-400 mb-2">Still needed before the family leaves</p>
+                  <ul className="space-y-1">
+                    {missingCritical.map(i => (
+                      <li key={i.id} className="text-sm text-foreground flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+                        {i.question}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {missingImportant.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400 mb-2">Follow up items</p>
+                  <ul className="space-y-1">
+                    {missingImportant.slice(0, 5).map(i => (
+                      <li key={i.id} className="text-sm text-muted-foreground flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" />
+                        {i.question}
+                      </li>
+                    ))}
+                    {missingImportant.length > 5 && (
+                      <li className="text-xs text-muted-foreground pl-4">+{missingImportant.length - 5} more — see case checklist</li>
+                    )}
+                  </ul>
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
     );
   }

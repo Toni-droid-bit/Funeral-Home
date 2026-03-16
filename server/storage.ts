@@ -201,7 +201,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getDocumentsByCaseId(caseId: number): Promise<Document[]> {
-    return await db.select().from(documents).where(eq(documents.caseId, caseId));
+    return await db.select().from(documents).where(eq(documents.caseId, caseId)).orderBy(desc(documents.createdAt));
   }
 
   async createDocument(data: InsertDocument): Promise<Document> {

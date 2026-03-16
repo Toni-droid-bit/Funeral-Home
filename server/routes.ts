@@ -1039,7 +1039,7 @@ export async function registerRoutes(
     res.json({ itemId, isCompleted: newCompletedItems.includes(itemId) });
   });
 
-  // Generate Intake Summary Document (plain text, no markdown)
+  // Generate Intake Summary Document — creates a NEW versioned document each time
   app.post("/api/cases/:id/generate-intake-summary", async (req, res) => {
     const caseId = Number(req.params.id);
 
@@ -1049,148 +1049,22 @@ export async function registerRoutes(
     }
 
     const intakeData = (caseItem.intakeData as IntakeData) || {};
-    const template = await storage.getDefaultChecklistTemplate();
-    const items = (template?.items as ChecklistItem[]) || [];
-    const completedItems = (caseItem.checklistCompletedItems as string[]) || [];
 
-    // Fetch calls and meetings for this case
-    const [caseCalls, caseMeetings] = await Promise.all([
-      storage.getCallsByCaseId(caseId),
-      storage.getMeetingsByCaseId(caseId),
-    ]);
+    // Use the shared generateIntakeDocument function for consistent formatting
+    const content = generateIntakeDocument(caseItem, intakeData);
 
-    // Build the intake summary document content (plain text)
-    const sections: string[] = [];
-
-    // Header
-    sections.push(`INTAKE SUMMARY: ${caseItem.deceasedName}`);
-    sections.push(`Case ID: ${caseItem.id}`);
-    sections.push(`Generated: ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`);
-    sections.push(`Status: ${caseItem.status}`);
-    sections.push('');
-
-    // Deceased Information
-    sections.push('DECEASED INFORMATION');
-    sections.push(`Full Legal Name: ${intakeData.deceasedInfo?.fullName || caseItem.deceasedName || 'Not provided'}`);
-    sections.push(`Date of Birth: ${intakeData.deceasedInfo?.dateOfBirth || 'Not provided'}`);
-    sections.push(`Date of Death: ${caseItem.dateOfDeath ? new Date(caseItem.dateOfDeath).toLocaleDateString() : (intakeData.deceasedInfo?.dateOfDeath || 'Not provided')}`);
-    sections.push(`Current Location: ${intakeData.deceasedInfo?.currentLocation || 'Not provided'}`);
-    sections.push(`Religion: ${caseItem.religion || 'Not specified'}`);
-    sections.push(`Language: ${caseItem.language || 'English'}`);
-    sections.push('');
-
-    // Next of Kin / Contact Information
-    sections.push('CONTACT INFORMATION');
-    sections.push(`Primary Contact: ${intakeData.callerInfo?.name || 'Not provided'}`);
-    sections.push(`Phone: ${intakeData.callerInfo?.phone || 'Not provided'}`);
-    sections.push(`Relationship: ${intakeData.callerInfo?.relationship || 'Not provided'}`);
-    sections.push(`Email: ${intakeData.callerInfo?.email || 'Not provided'}`);
-    sections.push('');
-
-    // Service Preferences
-    sections.push('SERVICE PREFERENCES');
-    sections.push(`Service Type: ${intakeData.servicePreferences?.serviceType || 'Not specified'}`);
-    sections.push(`Burial or Cremation: ${intakeData.servicePreferences?.burialOrCremation || 'Not specified'}`);
-    sections.push(`Religion: ${intakeData.servicePreferences?.religion || 'Not specified'}`);
-    sections.push(`Urgency: ${intakeData.servicePreferences?.urgency || 'Not specified'}`);
-    sections.push('');
-
-    // Call History
-    if (caseCalls.length > 0) {
-      sections.push('CALL HISTORY');
-      caseCalls.forEach((call: any, idx: number) => {
-        const date = call.createdAt ? new Date(call.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Unknown date';
-        sections.push(`Call ${idx + 1} — ${date}`);
-        if (call.callerName) sections.push(`  Caller: ${call.callerName} (${call.callerPhone || 'No phone'})`);
-        if (call.summary) sections.push(`  Summary: ${call.summary}`);
-        if (call.sentiment) sections.push(`  Sentiment: ${call.sentiment}`);
-        if (call.transcript) sections.push(`  Transcript:\n${call.transcript.split('\n').map((l: string) => `    ${l}`).join('\n')}`);
-      });
-      sections.push('');
-    }
-
-    // Meeting History
-    if (caseMeetings.length > 0) {
-      sections.push('ARRANGEMENT MEETING HISTORY');
-      caseMeetings.forEach((meeting: any, idx: number) => {
-        const date = meeting.createdAt ? new Date(meeting.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Unknown date';
-        sections.push(`Meeting ${idx + 1} — ${date}`);
-        if (meeting.directorName) sections.push(`  Director: ${meeting.directorName}`);
-        if (meeting.language) sections.push(`  Language: ${meeting.language}`);
-        if (meeting.summary) sections.push(`  Summary: ${meeting.summary}`);
-        if (meeting.actionItems && Array.isArray(meeting.actionItems) && meeting.actionItems.length > 0) {
-          sections.push(`  Action Items:`);
-          (meeting.actionItems as string[]).forEach((item: string) => sections.push(`    - ${item}`));
-        }
-        if (meeting.transcript) sections.push(`  Transcript:\n${meeting.transcript.split('\n').map((l: string) => `    ${l}`).join('\n')}`);
-      });
-      sections.push('');
-    }
-
-    // Checklist Status
-    const completedCount = items.filter(item => {
-      if (completedItems.includes(item.id)) return true;
-      if (item.fieldMapping) {
-        const value = item.fieldMapping.split('.').reduce((obj: any, key) => obj?.[key], intakeData);
-        return Boolean(value);
-      }
-      return false;
-    }).length;
-
-    sections.push('CHECKLIST PROGRESS');
-    sections.push(`Completed: ${completedCount} of ${items.length} items (${items.length > 0 ? Math.round((completedCount / items.length) * 100) : 0}%)`);
-    sections.push('');
-
-    // Group items by category
-    const categoryGroups = { critical: [] as string[], important: [] as string[], supplementary: [] as string[] };
-
-    items.forEach(item => {
-      let isCompleted = completedItems.includes(item.id);
-      if (!isCompleted && item.fieldMapping) {
-        const value = item.fieldMapping.split('.').reduce((obj: any, key) => obj?.[key], intakeData);
-        isCompleted = Boolean(value);
-      }
-
-      const status = isCompleted ? '[x]' : '[ ]';
-      const line = `${status} ${item.question}`;
-
-      if (item.category === 'critical') categoryGroups.critical.push(line);
-      else if (item.category === 'important') categoryGroups.important.push(line);
-      else categoryGroups.supplementary.push(line);
+    // Timestamped title so each version is distinct (newest shown first in the UI)
+    const timestamp = new Date().toLocaleString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
     });
+    const title = `Intake Summary — ${caseItem.deceasedName} (${timestamp})`;
 
-    if (categoryGroups.critical.length > 0) {
-      sections.push('CRITICAL ITEMS');
-      sections.push(...categoryGroups.critical);
-      sections.push('');
-    }
-
-    if (categoryGroups.important.length > 0) {
-      sections.push('IMPORTANT ITEMS');
-      sections.push(...categoryGroups.important);
-      sections.push('');
-    }
-
-    if (categoryGroups.supplementary.length > 0) {
-      sections.push('SUPPLEMENTARY ITEMS');
-      sections.push(...categoryGroups.supplementary);
-      sections.push('');
-    }
-
-    // Additional Notes
-    if (caseItem.notes) {
-      sections.push('ADDITIONAL NOTES');
-      sections.push(caseItem.notes);
-      sections.push('');
-    }
-
-    const content = sections.join('\n');
-
-    // Create the document in the database
+    // Always create a new document (versioned history)
     const document = await storage.createDocument({
       caseId,
       type: 'intake_summary',
-      title: `Intake Summary - ${caseItem.deceasedName}`,
+      title,
       content,
     });
 
