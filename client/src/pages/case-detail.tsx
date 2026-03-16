@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useCase } from "@/hooks/use-cases";
 import { useParams, useLocation } from "wouter";
 import { StatusBadge } from "@/components/status-badge";
@@ -39,6 +39,7 @@ interface ChecklistItemWithStatus {
   fieldMapping?: string;
   isCompleted: boolean;
   isManuallyCompleted: boolean;
+  manualValue?: string;
 }
 
 interface ComputedChecklist {
@@ -48,6 +49,42 @@ interface ComputedChecklist {
   completedPercentage: number;
 }
 
+function ChecklistValueInput({
+  currentValue,
+  onSave,
+}: {
+  currentValue: string;
+  onSave: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(currentValue);
+
+  // Keep draft in sync when external value changes (after save)
+  useEffect(() => {
+    setDraft(currentValue);
+  }, [currentValue]);
+
+  const handleSave = () => {
+    if (draft !== currentValue) {
+      onSave(draft);
+    }
+  };
+
+  return (
+    <input
+      type="text"
+      value={draft}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={handleSave}
+      onKeyDown={e => {
+        if (e.key === "Enter") { e.preventDefault(); handleSave(); }
+        if (e.key === "Escape") setDraft(currentValue);
+      }}
+      placeholder="Enter value..."
+      className="text-xs border border-input rounded px-2 py-0.5 w-40 bg-background focus:outline-none focus:ring-1 focus:ring-primary flex-shrink-0"
+    />
+  );
+}
+
 export default function CaseDetail() {
   const { id } = useParams();
   const caseId = Number(id);
@@ -55,6 +92,8 @@ export default function CaseDetail() {
   const { data: caseData, isLoading } = useCase(caseId) as { data: CaseWithRelations | null | undefined, isLoading: boolean };
   const { toast } = useToast();
   const [transcriptDialog, setTranscriptDialog] = useState<{ open: boolean; content: string; director: string }>({ open: false, content: "", director: "" });
+  const [editingTranscripts, setEditingTranscripts] = useState<Record<number, string | undefined>>({});
+  const [savingTranscripts, setSavingTranscripts] = useState<Record<number, boolean>>({});
 
   const { data: calls = [] } = useQuery<Call[]>({
     queryKey: ["/api/cases", caseId, "calls"],
@@ -93,9 +132,54 @@ export default function CaseDetail() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", caseId] });
       queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases", caseId, "checklist"] });
     },
     onError: () => {
       toast({ title: "Save failed", description: "Could not save changes.", variant: "destructive" });
+    },
+  });
+
+  const patchCallMutation = useMutation({
+    mutationFn: async ({ callId, transcript }: { callId: number; transcript: string }) => {
+      return apiRequest("PATCH", `/api/calls/${callId}`, { transcript });
+    },
+    onSuccess: (_, { callId }) => {
+      setSavingTranscripts(prev => ({ ...prev, [callId]: false }));
+      setEditingTranscripts(prev => { const n = { ...prev }; delete n[callId]; return n; });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", caseId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases", caseId, "calls"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases", caseId, "checklist"] });
+      toast({ title: "Transcript saved", description: "Case intake data has been updated." });
+    },
+    onError: (_, { callId }) => {
+      setSavingTranscripts(prev => ({ ...prev, [callId]: false }));
+      toast({ title: "Save failed", description: "Could not save transcript.", variant: "destructive" });
+    },
+  });
+
+  const patchDocumentMutation = useMutation({
+    mutationFn: async ({ docId, content }: { docId: number; content: string }) => {
+      return apiRequest("PATCH", `/api/documents/${docId}`, { content });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", caseId] });
+      toast({ title: "Document saved" });
+    },
+    onError: () => {
+      toast({ title: "Save failed", description: "Could not save document.", variant: "destructive" });
+    },
+  });
+
+  const updateChecklistValueMutation = useMutation({
+    mutationFn: async ({ itemId, value }: { itemId: string; value: string }) => {
+      return apiRequest("POST", `/api/cases/${caseId}/checklist/${itemId}/update-value`, { value });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/cases", caseId, "checklist"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", caseId] });
+    },
+    onError: () => {
+      toast({ title: "Save failed", description: "Could not save checklist value.", variant: "destructive" });
     },
   });
 
@@ -384,25 +468,13 @@ export default function CaseDetail() {
 
               <div>
                 <h4 className="text-sm font-medium text-muted-foreground mb-2">Notes</h4>
-                {(() => {
-                  const raw = caseData.notes || "";
-                  const lines = raw.split("\n");
-                  const warnings = lines.filter(l => l.startsWith("⚠️"));
-                  const rest = lines.filter(l => !l.startsWith("⚠️")).join("\n").trim();
-                  return (
-                    <>
-                      {warnings.map((w, i) => (
-                        <div key={i} className="flex items-start gap-2 mb-2 p-3 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 text-amber-800 dark:text-amber-300 text-sm">
-                          <span className="shrink-0">⚠️</span>
-                          <span>{w.replace("⚠️", "").trim()}</span>
-                        </div>
-                      ))}
-                      <p className="text-sm leading-relaxed text-foreground/80 bg-muted/30 p-4 rounded-md">
-                        {rest || "No additional notes provided."}
-                      </p>
-                    </>
-                  );
-                })()}
+                <InlineEditField
+                  value={caseData.notes}
+                  onSave={(v) => saveField({ notes: v })}
+                  placeholder="Click to add notes..."
+                  multiline={true}
+                  displayClassName="text-foreground/80"
+                />
               </div>
             </CardContent>
           </Card>
@@ -468,32 +540,56 @@ export default function CaseDetail() {
                             <div className="space-y-1">
                               {items.map(item => {
                                 const isAutoCompleted = item.fieldMapping && item.isCompleted && !item.isManuallyCompleted;
-                                const canToggle = !isAutoCompleted;
+                                const canToggle = !item.fieldMapping && !isAutoCompleted;
+
+                                // Get the current value from intakeData via fieldMapping
+                                const getCurrentFieldValue = () => {
+                                  if (!item.fieldMapping) return "";
+                                  const parts = item.fieldMapping.split('.');
+                                  return parts.reduce((obj: any, key) => obj?.[key], intake) || "";
+                                };
+                                const currentValue = getCurrentFieldValue();
 
                                 return (
-                                  <button
+                                  <div
                                     key={item.id}
-                                    onClick={() => canToggle && toggleChecklistMutation.mutate(item.id)}
-                                    disabled={toggleChecklistMutation.isPending || !canToggle}
-                                    className={`flex items-start gap-2 p-2 rounded text-sm w-full text-left transition-colors ${
+                                    className={`flex items-start gap-2 p-2 rounded text-sm w-full transition-colors ${
                                       item.isCompleted
                                         ? "bg-green-50 dark:bg-green-900/20"
                                         : config.bgColor
-                                    } ${canToggle ? "hover:opacity-80 cursor-pointer" : "cursor-default"}`}
+                                    }`}
                                     data-testid={`checklist-item-${item.id}`}
                                   >
-                                    {item.isCompleted ? (
-                                      <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
-                                    ) : (
-                                      <div className={`w-4 h-4 border-2 rounded flex-shrink-0 mt-0.5 ${config.iconColor} border-current`} />
-                                    )}
-                                    <span className={`flex-1 ${item.isCompleted ? "text-green-700 dark:text-green-300" : "text-foreground"}`}>
+                                    {/* Checkbox / status icon */}
+                                    <button
+                                      onClick={() => canToggle && toggleChecklistMutation.mutate(item.id)}
+                                      disabled={toggleChecklistMutation.isPending || !canToggle}
+                                      className={`flex-shrink-0 mt-0.5 ${canToggle ? "cursor-pointer hover:opacity-70" : "cursor-default"}`}
+                                    >
+                                      {item.isCompleted ? (
+                                        <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400" />
+                                      ) : (
+                                        <div className={`w-4 h-4 border-2 rounded ${config.iconColor} border-current`} />
+                                      )}
+                                    </button>
+
+                                    {/* Question label */}
+                                    <span className={`flex-1 min-w-0 ${item.isCompleted ? "text-green-700 dark:text-green-300" : "text-foreground"}`}>
                                       {item.question}
                                     </span>
-                                    {isAutoCompleted && (
-                                      <span className="text-xs text-muted-foreground">(auto)</span>
+
+                                    {/* Editable value input for field-mapped items */}
+                                    {item.fieldMapping ? (
+                                      <ChecklistValueInput
+                                        currentValue={currentValue}
+                                        onSave={(value) => updateChecklistValueMutation.mutate({ itemId: item.id, value })}
+                                      />
+                                    ) : (
+                                      isAutoCompleted && (
+                                        <span className="text-xs text-muted-foreground flex-shrink-0">(auto)</span>
+                                      )
                                     )}
-                                  </button>
+                                  </div>
                                 );
                               })}
                             </div>
@@ -519,21 +615,80 @@ export default function CaseDetail() {
                 </CardHeader>
                 <CardContent>
                   {calls.length > 0 ? (
-                    <div className="space-y-3">
-                      {calls.map(call => (
-                        <div key={call.id} className="p-3 rounded-lg bg-muted/30 border">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="font-medium">{call.callerName || call.callerPhone}</span>
-                            <StatusBadge status={call.status || "completed"} />
+                    <div className="space-y-4">
+                      {calls.map(call => {
+                        const isEditingTranscript = call.id in editingTranscripts;
+                        const transcriptDraft = editingTranscripts[call.id];
+                        const isSaving = savingTranscripts[call.id];
+                        return (
+                          <div key={call.id} className="p-3 rounded-lg bg-muted/30 border">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="font-medium">{call.callerName || call.callerPhone}</span>
+                              <StatusBadge status={call.status || "completed"} />
+                            </div>
+                            {call.summary && (
+                              <p className="text-sm text-muted-foreground mb-2">{call.summary}</p>
+                            )}
+                            <div className="text-xs text-muted-foreground mb-2">
+                              {call.createdAt && format(new Date(call.createdAt), "MMM d, yyyy h:mm a")}
+                            </div>
+                            {/* Editable transcript */}
+                            <div className="mt-2">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-xs font-medium text-muted-foreground">Transcript</span>
+                                {!isEditingTranscript && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 text-xs gap-1 px-2"
+                                    onClick={() => setEditingTranscripts(prev => ({ ...prev, [call.id]: call.transcript || "" }))}
+                                  >
+                                    <Pencil className="w-3 h-3" /> Edit
+                                  </Button>
+                                )}
+                              </div>
+                              {isEditingTranscript ? (
+                                <div className="space-y-2">
+                                  <textarea
+                                    className="w-full text-xs bg-background border border-primary rounded p-2 resize-y min-h-[8rem] focus:outline-none"
+                                    value={transcriptDraft}
+                                    onChange={e => setEditingTranscripts(prev => ({ ...prev, [call.id]: e.target.value }))}
+                                    placeholder="Enter transcript..."
+                                  />
+                                  <div className="flex gap-2">
+                                    <Button
+                                      size="sm"
+                                      className="h-7 text-xs"
+                                      disabled={isSaving}
+                                      onClick={() => {
+                                        setSavingTranscripts(prev => ({ ...prev, [call.id]: true }));
+                                        patchCallMutation.mutate({ callId: call.id, transcript: transcriptDraft || "" });
+                                      }}
+                                    >
+                                      {isSaving ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+                                      Save & Re-parse
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-7 text-xs"
+                                      onClick={() => setEditingTranscripts(prev => { const n = { ...prev }; delete n[call.id]; return n; })}
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : call.transcript ? (
+                                <div className="text-xs text-muted-foreground bg-background border rounded p-2 max-h-32 overflow-y-auto whitespace-pre-wrap">
+                                  {call.transcript}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-muted-foreground/50 italic">No transcript available. Click Edit to add one.</p>
+                              )}
+                            </div>
                           </div>
-                          {call.summary && (
-                            <p className="text-sm text-muted-foreground">{call.summary}</p>
-                          )}
-                          <div className="text-xs text-muted-foreground mt-2">
-                            {call.createdAt && format(new Date(call.createdAt), "MMM d, yyyy h:mm a")}
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="text-center py-8 text-muted-foreground">
@@ -629,9 +784,16 @@ export default function CaseDetail() {
                               </div>
                             </div>
                           </div>
-                          {doc.content && (
-                            <div className="mt-3 p-3 bg-background rounded border text-sm whitespace-pre-wrap max-h-64 overflow-y-auto">
-                              {doc.content}
+                          {doc.content !== undefined && (
+                            <div className="mt-3">
+                              <InlineEditField
+                                value={doc.content}
+                                onSave={(v) => patchDocumentMutation.mutate({ docId: doc.id, content: v })}
+                                placeholder="No content. Click to add..."
+                                multiline={true}
+                                inputClassName="min-h-[12rem] font-mono text-xs"
+                                displayClassName="font-mono text-xs max-h-64 overflow-y-auto"
+                              />
                             </div>
                           )}
                         </div>

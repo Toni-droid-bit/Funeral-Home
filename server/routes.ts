@@ -127,6 +127,15 @@ export async function registerRoutes(
     }
 
     const updated = await storage.updateCase(id, updates);
+
+    // Auto-regenerate intake summary document after any case update
+    try {
+      const intakeData = (updated.intakeData as IntakeData) || {};
+      await updateIntakeDocument(id, updated, intakeData);
+    } catch (err) {
+      console.error("Failed to auto-update intake document:", err);
+    }
+
     res.json(updated);
   });
 
@@ -310,7 +319,7 @@ export async function registerRoutes(
     }
   });
 
-  // Update manual checklist value
+  // Update manual checklist value — saves to intakeData via fieldMapping
   app.post("/api/cases/:caseId/checklist/:itemId/update-value", async (req, res) => {
     try {
       const caseId = Number(req.params.caseId);
@@ -318,18 +327,54 @@ export async function registerRoutes(
       const { value } = req.body;
 
       const caseData = await storage.getCase(caseId);
-      if (!caseData) {
-        return res.status(404).json({ error: "Case not found" });
+      if (!caseData) return res.status(404).json({ error: "Case not found" });
+
+      const template = await storage.getDefaultChecklistTemplate();
+      if (!template) return res.status(404).json({ error: "No default checklist template" });
+
+      const items = template.items as ChecklistItem[];
+      const item = items.find(i => i.id === itemId);
+      if (!item) return res.status(404).json({ error: "Checklist item not found" });
+
+      const updates: any = {};
+
+      if (item.fieldMapping) {
+        // Save value directly to intakeData via the fieldMapping path (e.g. "deceasedInfo.fullName")
+        const parts = item.fieldMapping.split('.');
+        if (parts.length >= 2) {
+          const existingIntake = (caseData.intakeData as IntakeData) || {};
+          // Build a nested fragment matching the path
+          const fragment: any = {};
+          let cursor = fragment;
+          for (let i = 0; i < parts.length - 1; i++) {
+            cursor[parts[i]] = {};
+            cursor = cursor[parts[i]];
+          }
+          cursor[parts[parts.length - 1]] = value;
+          const merged = mergeIntakeData(existingIntake, validateIntakeData(fragment));
+          updates.intakeData = merged;
+          updates.missingFields = calculateMissingFields(merged);
+        }
+      } else {
+        // Custom item (no fieldMapping) — auto-check when a value is typed
+        const completedItems = (caseData.checklistCompletedItems as string[]) || [];
+        if (value && !completedItems.includes(itemId)) {
+          updates.checklistCompletedItems = [...completedItems, itemId];
+        } else if (!value && completedItems.includes(itemId)) {
+          updates.checklistCompletedItems = completedItems.filter(id => id !== itemId);
+        }
       }
 
-      // Get current checklist values (stored as notes on the case for now)
-      const checklistValues = ((caseData as any).checklistValues as Record<string, string>) || {};
-
-      // Update the value for this item
-      checklistValues[itemId] = value;
-
-      // Save back to case (noop for field that doesn't exist in schema — values tracked via intakeData)
-      // await storage.updateCase(caseId, { checklistValues });
+      if (Object.keys(updates).length > 0) {
+        const updated = await storage.updateCase(caseId, updates);
+        // Regenerate intake summary document
+        try {
+          const intakeForDoc = (updates.intakeData || caseData.intakeData) as IntakeData || {};
+          await updateIntakeDocument(caseId, updated, intakeForDoc);
+        } catch (err) {
+          console.error("Failed to regenerate intake document:", err);
+        }
+      }
 
       res.json({ success: true, itemId, value });
     } catch (error: any) {
@@ -405,6 +450,49 @@ export async function registerRoutes(
     }
   });
 
+  // PATCH /api/calls/:id — edit transcript (re-parses and updates linked case)
+  app.patch("/api/calls/:id", async (req, res) => {
+    const callId = Number(req.params.id);
+    const call = await storage.getCall(callId);
+    if (!call) return res.status(404).json({ message: "Call not found" });
+
+    const { transcript, summary } = req.body;
+    const callUpdates: any = {};
+    if (transcript !== undefined) callUpdates.transcript = transcript;
+    if (summary !== undefined) callUpdates.summary = summary;
+
+    const updatedCall = await storage.updateCall(callId, callUpdates);
+
+    // If transcript changed and call is linked to a case, re-parse and cascade updates
+    if (transcript !== undefined && call.caseId) {
+      try {
+        const intakeData = await parseCallTranscriptToIntake(transcript, call.summary || undefined);
+        const existingCase = await storage.getCase(call.caseId);
+        if (existingCase) {
+          const mergedIntake = mergeIntakeData((existingCase.intakeData as IntakeData) || {}, intakeData);
+          const missingFields = calculateMissingFields(mergedIntake);
+          const caseUpdates: any = { intakeData: mergedIntake, missingFields };
+
+          if (intakeData.deceasedInfo?.fullName &&
+            (existingCase.deceasedName === "Unknown (Pending)" || !existingCase.deceasedName)) {
+            caseUpdates.deceasedName = intakeData.deceasedInfo.fullName;
+          }
+          if (intakeData.servicePreferences?.religion &&
+            (existingCase.religion === "Unknown" || !existingCase.religion)) {
+            caseUpdates.religion = intakeData.servicePreferences.religion;
+          }
+
+          const updatedCase = await storage.updateCase(call.caseId, caseUpdates);
+          await updateIntakeDocument(call.caseId, updatedCase, mergedIntake);
+        }
+      } catch (err) {
+        console.error("Failed to re-parse call transcript after edit:", err);
+      }
+    }
+
+    res.json(updatedCall);
+  });
+
   // Meetings
   app.get(api.meetings.list.path, async (req, res) => {
     const meetings = await storage.getMeetings();
@@ -447,6 +535,22 @@ export async function registerRoutes(
         return res.status(400).json({ message: err.errors[0].message });
       }
       throw err;
+    }
+  });
+
+  // PATCH /api/documents/:id — edit document content directly
+  app.patch("/api/documents/:id", async (req, res) => {
+    const docId = Number(req.params.id);
+    const { content, title } = req.body;
+    const updates: any = {};
+    if (content !== undefined) updates.content = content;
+    if (title !== undefined) updates.title = title;
+    try {
+      const updated = await storage.updateDocument(docId, updates);
+      if (!updated) return res.status(404).json({ message: "Document not found" });
+      res.json(updated);
+    } catch (err) {
+      res.status(404).json({ message: "Document not found" });
     }
   });
 
