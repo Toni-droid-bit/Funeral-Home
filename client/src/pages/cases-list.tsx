@@ -1,30 +1,55 @@
 import { useCases } from "@/hooks/use-cases";
 import { CreateCaseDialog } from "@/components/create-case-dialog";
-import { 
-  Table, 
-  TableBody, 
-  TableCell, 
-  TableHead, 
-  TableHeader, 
-  TableRow 
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
 } from "@/components/ui/table";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
-import { Search, Loader2 } from "lucide-react";
+import { Search, Loader2, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
+import { useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 export default function CasesList() {
   const { data: cases, isLoading } = useCases();
   const [search, setSearch] = useState("");
   const [, navigate] = useLocation();
+  const { toast } = useToast();
 
-  const filteredCases = cases?.filter(c => 
+  const filteredCases = cases?.filter(c =>
     c.deceasedName.toLowerCase().includes(search.toLowerCase()) ||
     c.status?.toLowerCase().includes(search.toLowerCase())
   );
+
+  const deleteAllMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest("DELETE", "/api/cases", undefined);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+      toast({ title: "All cases deleted", description: "All cases have been permanently deleted." });
+    },
+    onError: () => {
+      toast({ title: "Delete failed", description: "Could not delete cases.", variant: "destructive" });
+    },
+  });
+
+  const handleDeleteAll = () => {
+    if (!cases?.length) return;
+    if (confirm(`Are you sure you want to permanently delete all ${cases.length} case(s)? This cannot be undone.`)) {
+      deleteAllMutation.mutate();
+    }
+  };
 
   return (
     <div className="space-y-8">
@@ -38,9 +63,9 @@ export default function CasesList() {
 
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground w-4 h-4" />
-        <Input 
-          placeholder="Search cases..." 
-          className="pl-10 max-w-sm" 
+        <Input
+          placeholder="Search cases..."
+          className="pl-10 max-w-sm"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -96,6 +121,26 @@ export default function CasesList() {
           </Table>
         </CardContent>
       </Card>
+
+      {/* Delete All button at the bottom */}
+      {cases && cases.length > 0 && (
+        <div className="flex justify-end pt-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-destructive border-destructive/30 hover:bg-destructive/10 gap-2"
+            onClick={handleDeleteAll}
+            disabled={deleteAllMutation.isPending}
+          >
+            {deleteAllMutation.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Trash2 className="w-4 h-4" />
+            )}
+            Delete All Cases
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

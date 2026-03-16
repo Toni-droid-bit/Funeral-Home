@@ -7,6 +7,9 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/status-badge";
 import { MakeCallDialog } from "@/components/make-call-dialog";
 import { useToast } from "@/hooks/use-toast";
@@ -25,6 +28,9 @@ import {
   Square,
   ChevronRight,
   ClipboardList,
+  ChevronsUpDown,
+  Check,
+  PlusCircle,
 } from "lucide-react";
 import { format } from "date-fns";
 import { Link } from "wouter";
@@ -85,7 +91,16 @@ export default function Communications() {
   const [editableTranscript, setEditableTranscript] = useState("");
   const [liveTranscript, setLiveTranscript] = useState("");
   const [isConnecting, setIsConnecting] = useState(false);
+  const [isEnteringRecording, setIsEnteringRecording] = useState(false);
+  // True when a placeholder "Unknown (Pending)" case was auto-created for a no-case recording
+  const [isTempCase, setIsTempCase] = useState(false);
   const { toast } = useToast();
+
+  // Case combobox state for the Record section
+  const [caseComboOpen, setCaseComboOpen] = useState(false);
+  // "existing:<id>" | "new:<name>" | "none"
+  const [caseSelection, setCaseSelection] = useState<string>("none");
+  const [newCaseInputValue, setNewCaseInputValue] = useState("");
 
   // Audio recording refs
   const wsRef = useRef<WebSocket | null>(null);
@@ -179,11 +194,17 @@ export default function Communications() {
       return apiRequest("POST", `/api/meetings/${meetingId}/reprocess`, {});
     },
     onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", selectedCaseId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/cases", selectedCaseId, "checklist"] });
+      // If a new case was auto-created, update selectedCaseId for review mode
+      if (data?.caseId && !selectedCaseId) {
+        setSelectedCaseId(data.caseId.toString());
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
       queryClient.invalidateQueries({ queryKey: ["/api/meetings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/documents"] });
+      if (data?.caseId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", data.caseId.toString()] });
+        queryClient.invalidateQueries({ queryKey: ["/api/cases", data.caseId.toString(), "checklist"] });
+      }
       toast({
         title: "Meeting Reprocessed",
         description: data.message || "Intake data has been extracted from the meeting transcript.",
@@ -204,8 +225,9 @@ export default function Communications() {
       return apiRequest("POST", `/api/cases/${caseId}/live-extract`, { transcript });
     },
     onSuccess: () => {
-      // Refetch checklist to show updated items
+      // Refetch checklist and cases so live name detection propagates immediately
       refetchChecklist();
+      queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
       queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", selectedCaseId] });
     },
     onError: (error: any) => {
@@ -215,7 +237,7 @@ export default function Communications() {
 
   // Create meeting mutation with auto-extraction
   const createMeetingMutation = useMutation({
-    mutationFn: async (meetingData: { caseId: number; directorName: string; language: string; transcript: string }) => {
+    mutationFn: async (meetingData: { caseId?: number | null; directorName: string; language: string; transcript: string }) => {
       return apiRequest("POST", "/api/meetings", {
         ...meetingData,
         status: "completed",
@@ -223,11 +245,12 @@ export default function Communications() {
     },
     onSuccess: async (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/meetings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
       toast({
         title: "Meeting Saved",
         description: "Transcript saved. Now extracting intake data...",
       });
-      // Automatically trigger extraction after saving
+      // Automatically trigger extraction after saving — works with or without caseId
       if (data?.id) {
         reprocessMeetingMutation.mutate(data.id);
       }
@@ -330,7 +353,7 @@ export default function Communications() {
         // Only extract if transcript has changed significantly since last extraction
         if (selectedCaseId && liveTranscript.length > lastExtractionRef.current.length + 30) {
           lastExtractionRef.current = liveTranscript;
-          liveExtractMutation.mutate({ caseId: selectedCaseId, transcript: liveTranscript });
+          liveExtractMutation.mutate({ caseId: Number(selectedCaseId), transcript: liveTranscript });
         }
       }, 15000);
       
@@ -343,16 +366,51 @@ export default function Communications() {
     }
   }, [isRecording, selectedCaseId, liveTranscript.length]);
 
-  const handleStartRecording = async () => {
-    if (!selectedCaseId) {
-      toast({
-        title: "Select a case",
-        description: "Please select a case before starting the recording",
-        variant: "destructive",
-      });
-      return;
+  // Called by the "Record" button in hub mode — sets up case before entering recording screen
+  const handleEnterRecordingMode = async () => {
+    setIsEnteringRecording(true);
+    try {
+      if (caseSelection.startsWith("existing:")) {
+        setSelectedCaseId(caseSelection.slice(9));
+        setIsTempCase(false);
+      } else if (caseSelection.startsWith("new:")) {
+        const name = caseSelection.slice(4).trim() || "New Case";
+        const res = await apiRequest("POST", "/api/cases", {
+          deceasedName: name,
+          status: "active",
+          religion: "Unknown",
+          language: "English",
+        });
+        const newCase = await res.json();
+        if (!newCase?.id) throw new Error("Case creation returned no ID");
+        setSelectedCaseId(newCase.id.toString());
+        setIsTempCase(false);
+        queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+      } else {
+        // "none" — create a placeholder immediately so the checklist has a case to bind to
+        const res = await apiRequest("POST", "/api/cases", {
+          deceasedName: "Unknown (Pending)",
+          status: "active",
+          religion: "Unknown",
+          language: "English",
+          notes: "Created automatically for meeting recording — name will be detected from transcript.",
+        });
+        const newCase = await res.json();
+        if (!newCase?.id) throw new Error("Case creation returned no ID");
+        setSelectedCaseId(newCase.id.toString());
+        setIsTempCase(true);
+        queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+      }
+      setMode("recording");
+    } catch (err: any) {
+      toast({ title: "Failed to start session", description: err.message || "Could not create case. Please try again.", variant: "destructive" });
+    } finally {
+      setIsEnteringRecording(false);
     }
+  };
 
+  const handleStartRecording = async () => {
+    // Case is already set by handleEnterRecordingMode
     setIsConnecting(true);
     setLiveTranscript("");
     lastExtractionRef.current = "";
@@ -479,16 +537,16 @@ export default function Communications() {
     setIsRecording(false);
     setIsConnecting(false);
     
-    // Automatically save the meeting and trigger extraction
-    if (selectedCaseId && finalTranscript && finalTranscript !== "No transcript captured") {
+    // Automatically save the meeting and trigger extraction (works with or without a caseId)
+    if (finalTranscript && finalTranscript !== "No transcript captured") {
       createMeetingMutation.mutate({
-        caseId: parseInt(selectedCaseId),
+        caseId: selectedCaseId ? parseInt(selectedCaseId) : null,
         directorName: directorName || "Unknown Director",
         language: language,
         transcript: finalTranscript,
       });
     }
-    
+
     setMode("review");
   };
 
@@ -513,10 +571,14 @@ export default function Communications() {
     setMode("hub");
     setSelectedItem(null);
     setSelectedCaseId("");
+    setCaseSelection("none");
+    setNewCaseInputValue("");
     setEditableTranscript("");
     setLiveTranscript("");
     setIsRecording(false);
     setIsConnecting(false);
+    setIsEnteringRecording(false);
+    setIsTempCase(false);
     setRecordingTime(0);
   };
 
@@ -546,7 +608,15 @@ export default function Communications() {
             <div>
               <h2 className="text-3xl font-display font-bold text-primary">New Meeting Recording</h2>
               <p className="text-muted-foreground mt-1">
-                Case: {cases.find(c => c.id === parseInt(selectedCaseId))?.deceasedName || "No case selected"}
+                {(() => {
+                  const caseName = cases.find(c => c.id === parseInt(selectedCaseId))?.deceasedName;
+                  if (isTempCase && (!caseName || caseName === "Unknown (Pending)")) {
+                    return "Detecting case from transcript…";
+                  }
+                  if (isTempCase && caseName) return `Case: ${caseName}`;
+                  if (caseSelection.startsWith("new:")) return `New case: ${caseSelection.slice(4)}`;
+                  return `Case: ${caseName || "Selected"}`;
+                })()}
               </p>
             </div>
           </div>
@@ -586,7 +656,13 @@ export default function Communications() {
           <div>
             <h2 className="text-3xl font-display font-bold text-primary">Recording Meeting</h2>
             <p className="text-muted-foreground mt-1">
-              Case: {cases.find(c => c.id === parseInt(selectedCaseId))?.deceasedName}
+              {(() => {
+                const caseName = cases.find(c => c.id === parseInt(selectedCaseId))?.deceasedName;
+                if (isTempCase && (!caseName || caseName === "Unknown (Pending)")) {
+                  return "Detecting name from transcript…";
+                }
+                return `Case: ${caseName || "Selected"}`;
+              })()}
             </p>
           </div>
         </div>
@@ -1050,6 +1126,7 @@ export default function Communications() {
                       size="sm"
                       onClick={() => {
                         setSelectedCaseId(c.id.toString());
+                        setIsTempCase(false);
                         setMode("recording");
                       }}
                       data-testid={`button-start-meeting-${c.id}`}
@@ -1067,36 +1144,132 @@ export default function Communications() {
       {/* Quick Start Recording */}
       <Card className="bg-primary/5 border-primary/20">
         <CardContent className="p-6">
-          <div className="flex flex-col md:flex-row md:items-center gap-4">
+          <div className="flex flex-col md:flex-row md:items-start gap-4">
             <div className="flex-1">
               <h3 className="font-semibold text-lg">Start New Meeting Recording</h3>
               <p className="text-sm text-muted-foreground">Record an arrangement meeting and get automatic transcription</p>
             </div>
-            <div className="flex items-center gap-3">
-              <Select value={selectedCaseId} onValueChange={setSelectedCaseId}>
-                <SelectTrigger className="w-[200px]" data-testid="select-case">
-                  <SelectValue placeholder="Select case" />
-                </SelectTrigger>
-                <SelectContent>
-                  {cases.map(c => (
-                    <SelectItem key={c.id} value={c.id.toString()}>
-                      {c.deceasedName}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="flex flex-col gap-2 min-w-[260px]">
+              {/* Case combobox */}
+              <Popover open={caseComboOpen} onOpenChange={setCaseComboOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={caseComboOpen}
+                    className="w-full justify-between"
+                    data-testid="select-case"
+                  >
+                    <span className="truncate text-left">
+                      {caseSelection === "none"
+                        ? "No case (auto-detect)"
+                        : caseSelection.startsWith("existing:")
+                          ? cases.find(c => c.id.toString() === caseSelection.slice(9))?.deceasedName || "Select case"
+                          : caseSelection.startsWith("new:")
+                            ? `New: ${caseSelection.slice(4)}`
+                            : "Select case"}
+                    </span>
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[280px] p-0" align="start">
+                  <Command>
+                    <CommandInput
+                      placeholder="Search cases or type new name..."
+                      value={newCaseInputValue}
+                      onValueChange={(v) => {
+                        setNewCaseInputValue(v);
+                        if (v.trim()) {
+                          // Check if it matches an existing case
+                          const match = cases.find(c => c.deceasedName.toLowerCase() === v.toLowerCase());
+                          if (match) {
+                            setCaseSelection(`existing:${match.id}`);
+                          } else {
+                            setCaseSelection(`new:${v.trim()}`);
+                          }
+                        } else {
+                          setCaseSelection("none");
+                        }
+                      }}
+                    />
+                    <CommandList>
+                      <CommandEmpty>
+                        {newCaseInputValue.trim()
+                          ? <span className="text-sm text-muted-foreground px-2">Press Record to create "{newCaseInputValue}"</span>
+                          : <span className="text-sm text-muted-foreground px-2">No cases found</span>}
+                      </CommandEmpty>
+
+                      {/* Start without a case */}
+                      <CommandGroup>
+                        <CommandItem
+                          value="none"
+                          onSelect={() => {
+                            setCaseSelection("none");
+                            setNewCaseInputValue("");
+                            setCaseComboOpen(false);
+                          }}
+                        >
+                          <Check className={`mr-2 h-4 w-4 ${caseSelection === "none" ? "opacity-100" : "opacity-0"}`} />
+                          <span className="text-muted-foreground italic">No case — auto-detect from recording</span>
+                        </CommandItem>
+                      </CommandGroup>
+
+                      {cases.length > 0 && (
+                        <>
+                          <CommandSeparator />
+                          <CommandGroup heading="Existing Cases">
+                            {cases
+                              .filter(c => !newCaseInputValue || c.deceasedName.toLowerCase().includes(newCaseInputValue.toLowerCase()))
+                              .map(c => (
+                                <CommandItem
+                                  key={c.id}
+                                  value={`existing:${c.id}`}
+                                  onSelect={() => {
+                                    setCaseSelection(`existing:${c.id}`);
+                                    setNewCaseInputValue(c.deceasedName);
+                                    setCaseComboOpen(false);
+                                  }}
+                                >
+                                  <Check className={`mr-2 h-4 w-4 ${caseSelection === `existing:${c.id}` ? "opacity-100" : "opacity-0"}`} />
+                                  {c.deceasedName}
+                                </CommandItem>
+                              ))}
+                          </CommandGroup>
+                        </>
+                      )}
+
+                      {/* Create new case option when user has typed something that doesn't match */}
+                      {newCaseInputValue.trim() && !cases.some(c => c.deceasedName.toLowerCase() === newCaseInputValue.toLowerCase()) && (
+                        <>
+                          <CommandSeparator />
+                          <CommandGroup heading="Create New">
+                            <CommandItem
+                              value={`new:${newCaseInputValue.trim()}`}
+                              onSelect={() => {
+                                setCaseSelection(`new:${newCaseInputValue.trim()}`);
+                                setCaseComboOpen(false);
+                              }}
+                            >
+                              <PlusCircle className="mr-2 h-4 w-4 text-primary" />
+                              Create "{newCaseInputValue.trim()}"
+                            </CommandItem>
+                          </CommandGroup>
+                        </>
+                      )}
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+
               <Button
-                onClick={() => {
-                  if (!selectedCaseId) {
-                    toast({ title: "Select a case", description: "Please select a case before starting the recording", variant: "destructive" });
-                    return;
-                  }
-                  setMode("recording");
-                }}
-                className="gap-2"
+                onClick={handleEnterRecordingMode}
+                disabled={isEnteringRecording}
+                className="gap-2 w-full"
                 data-testid="button-start-recording"
               >
-                <Mic className="w-4 h-4" /> Record
+                {isEnteringRecording
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Setting up…</>
+                  : <><Mic className="w-4 h-4" /> Record</>}
               </Button>
             </div>
           </div>

@@ -19,6 +19,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
+import { InlineEditField } from "@/components/inline-edit-field";
 
 export default function XLinkCalls() {
   const { data: calls, isLoading } = useCalls();
@@ -45,6 +46,19 @@ export default function XLinkCalls() {
     },
   });
 
+  const patchCaseMutation = useMutation({
+    mutationFn: async ({ caseId, data }: { caseId: number; data: any }) => {
+      return apiRequest("PATCH", `/api/cases/${caseId}`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/calls"] });
+    },
+    onError: () => {
+      toast({ title: "Save failed", description: "Could not save field.", variant: "destructive" });
+    },
+  });
+
   // Auto-extract on load for any call that has a transcript but whose case is still "Unknown (Pending)" or has no case
   useEffect(() => {
     if (!calls || isLoading) return;
@@ -52,7 +66,6 @@ export default function XLinkCalls() {
       if (!call.transcript) return false;
       if (autoExtractedRef.current.has(call.id)) return false;
       const linkedCase = getCaseForCall(call.caseId);
-      // Run if no case linked, or case is still pending with no intake data
       return !call.caseId || linkedCase?.deceasedName === "Unknown (Pending)";
     });
     for (const call of unprocessed) {
@@ -61,6 +74,23 @@ export default function XLinkCalls() {
       reprocessMutation.mutate(call.id);
     }
   }, [calls, isLoading, cases]);
+
+  const makeIntakeSaver = (caseId: number, section: string, field: string) => async (value: string) => {
+    await patchCaseMutation.mutateAsync({
+      caseId,
+      data: { intakeData: { [section]: { [field]: value } } },
+    });
+  };
+
+  const makeFieldSaver = (caseId: number, field: string) => async (value: string) => {
+    await patchCaseMutation.mutateAsync({ caseId, data: { [field]: value } });
+  };
+
+  // Resolve caller name: prefer intake callerInfo.name, fallback to call.callerName, then "Unknown Caller"
+  const resolveCallerName = (call: any) => {
+    const linkedCase = getCaseForCall(call.caseId);
+    return linkedCase?.intakeData?.callerInfo?.name || call.callerName || null;
+  };
 
   return (
     <div className="space-y-8">
@@ -79,145 +109,208 @@ export default function XLinkCalls() {
       <div className="space-y-4">
         {isLoading ? (
           <div className="p-12 text-center text-muted-foreground">Loading calls...</div>
-        ) : calls?.map((call) => (
-          <Card key={call.id} className="shadow-sm hover-elevate transition-shadow border-border/60" data-testid={`card-call-${call.id}`}>
-            <CardContent className="p-6">
-              <div className="flex flex-col md:flex-row gap-6">
-                {/* Caller Info */}
-                <div className="min-w-[200px]">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="p-2 bg-primary/10 rounded-full">
-                      {call.status === "in-progress" ? (
-                        <PhoneOutgoing className="w-5 h-5 text-primary animate-pulse" />
-                      ) : (
-                        <Phone className="w-5 h-5 text-primary" />
-                      )}
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-foreground" data-testid={`text-caller-name-${call.id}`}>
-                        {call.callerName || "Unknown Caller"}
-                      </h3>
-                      <p className="text-sm text-muted-foreground" data-testid={`text-caller-phone-${call.id}`}>
-                        {call.callerPhone}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2 mt-3">
-                    <StatusBadge status={call.status || "completed"} />
-                    <Badge variant="outline" className="text-xs bg-secondary/50 border-secondary">
-                      {call.detectedLanguage}
-                    </Badge>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    {call.createdAt ? format(new Date(call.createdAt), "MMM d, yyyy • h:mm a") : ""}
-                  </p>
-                </div>
+        ) : calls?.map((call) => {
+          const linkedCase = getCaseForCall(call.caseId);
+          const intake = linkedCase?.intakeData || {};
+          const callerName = resolveCallerName(call);
 
-                {/* Content & Summary */}
-                <div className="flex-1 space-y-3">
-                  {call.summary ? (
-                    <div className="bg-muted/30 p-3 rounded-lg border border-border/50">
-                      <p className="text-sm font-medium text-primary mb-1">AI Summary</p>
-                      <p className="text-sm text-muted-foreground leading-relaxed" data-testid={`text-summary-${call.id}`}>
-                        {call.summary}
-                      </p>
-                    </div>
-                  ) : call.status === "in-progress" ? (
-                    <div className="bg-primary/5 p-3 rounded-lg border border-primary/20">
-                      <p className="text-sm font-medium text-primary mb-1">Call In Progress</p>
-                      <p className="text-sm text-muted-foreground leading-relaxed">
-                        The AI assistant is currently on the call. Summary will appear when complete.
-                      </p>
-                    </div>
-                  ) : (
-                    <p className="text-sm italic text-muted-foreground">No summary available yet.</p>
-                  )}
-                  
-                  {call.sentiment && (
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="font-medium text-muted-foreground">Sentiment:</span>
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium capitalize ${
-                        call.sentiment.toLowerCase().includes('positive') || call.sentiment.toLowerCase().includes('calm') 
-                          ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 
-                        call.sentiment.toLowerCase().includes('negative') || call.sentiment.toLowerCase().includes('grief') || call.sentiment.toLowerCase().includes('anxious')
-                          ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' : 
-                        'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
-                      }`}>
-                        {call.sentiment}
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Case Link Status */}
-                  {call.caseId && getCaseForCall(call.caseId) && (
-                    <div className="flex items-center gap-2 mt-2 p-2 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
-                      <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400" />
-                      <span className="text-sm text-green-700 dark:text-green-300">
-                        Case created: <strong>{getCaseForCall(call.caseId)?.deceasedName}</strong>
-                      </span>
-                      <Link href={`/cases/${call.caseId}`}>
-                        <Button variant="ghost" size="sm" className="ml-auto h-7 text-xs gap-1" data-testid={`button-view-case-${call.id}`}>
-                          <FolderOpen className="w-3 h-3" />
-                          View Case
-                        </Button>
-                      </Link>
-                    </div>
-                  )}
-                </div>
-
-                {/* Actions */}
-                <div className="flex md:flex-col justify-end gap-2 min-w-[140px]">
-                  {call.transcript && (
-                    <>
-                      <Dialog>
-                        <DialogTrigger asChild>
-                          <Button variant="outline" size="sm" className="w-full justify-start gap-2" data-testid={`button-transcript-${call.id}`}>
-                            <FileText className="w-4 h-4" /> Transcript
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent className="max-w-2xl max-h-[80vh]">
-                          <DialogHeader>
-                            <DialogTitle>Call Transcript</DialogTitle>
-                          </DialogHeader>
-                          <ScrollArea className="h-[60vh] pr-4">
-                            <div className="whitespace-pre-wrap text-sm text-muted-foreground">
-                              {call.transcript}
-                            </div>
-                          </ScrollArea>
-                        </DialogContent>
-                      </Dialog>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full justify-start gap-2 text-purple-700 border-purple-200 hover:bg-purple-50"
-                        onClick={() => reprocessMutation.mutate(call.id)}
-                        disabled={reprocessMutation.isPending}
-                        data-testid={`button-extract-${call.id}`}
-                      >
-                        {reprocessMutation.isPending && reprocessMutation.variables === call.id ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
+          return (
+            <Card key={call.id} className="shadow-sm hover-elevate transition-shadow border-border/60" data-testid={`card-call-${call.id}`}>
+              <CardContent className="p-6">
+                <div className="flex flex-col md:flex-row gap-6">
+                  {/* Caller Info */}
+                  <div className="min-w-[200px]">
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="p-2 bg-primary/10 rounded-full">
+                        {call.status === "in-progress" ? (
+                          <PhoneOutgoing className="w-5 h-5 text-primary animate-pulse" />
                         ) : (
-                          <Sparkles className="w-4 h-4" />
+                          <Phone className="w-5 h-5 text-primary" />
                         )}
-                        Extract Data
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-foreground" data-testid={`text-caller-name-${call.id}`}>
+                          {callerName || "Unknown Caller"}
+                        </h3>
+                        <p className="text-sm text-muted-foreground" data-testid={`text-caller-phone-${call.id}`}>
+                          {call.callerPhone}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      <StatusBadge status={call.status || "completed"} />
+                      <Badge variant="outline" className="text-xs bg-secondary/50 border-secondary">
+                        {call.detectedLanguage}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      {call.createdAt ? format(new Date(call.createdAt), "MMM d, yyyy • h:mm a") : ""}
+                    </p>
+                  </div>
+
+                  {/* Content & Summary */}
+                  <div className="flex-1 space-y-3">
+                    {call.summary ? (
+                      <div className="bg-muted/30 p-3 rounded-lg border border-border/50">
+                        <p className="text-sm font-medium text-primary mb-1">AI Summary</p>
+                        <p className="text-sm text-muted-foreground leading-relaxed" data-testid={`text-summary-${call.id}`}>
+                          {call.summary}
+                        </p>
+                      </div>
+                    ) : call.status === "in-progress" ? (
+                      <div className="bg-primary/5 p-3 rounded-lg border border-primary/20">
+                        <p className="text-sm font-medium text-primary mb-1">Call In Progress</p>
+                        <p className="text-sm text-muted-foreground leading-relaxed">
+                          The AI assistant is currently on the call. Summary will appear when complete.
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-sm italic text-muted-foreground">No summary available yet.</p>
+                    )}
+
+                    {call.sentiment && (
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="font-medium text-muted-foreground">Sentiment:</span>
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium capitalize ${
+                          call.sentiment.toLowerCase().includes('positive') || call.sentiment.toLowerCase().includes('calm')
+                            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
+                          call.sentiment.toLowerCase().includes('negative') || call.sentiment.toLowerCase().includes('grief') || call.sentiment.toLowerCase().includes('anxious')
+                            ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
+                          'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                        }`}>
+                          {call.sentiment}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Case Link Status */}
+                    {call.caseId && linkedCase && (
+                      <div className="flex items-center gap-2 mt-2 p-2 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+                        <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400" />
+                        <span className="text-sm text-green-700 dark:text-green-300">
+                          Case: <strong>{linkedCase.deceasedName}</strong>
+                        </span>
+                        <Link href={`/cases/${call.caseId}`}>
+                          <Button variant="ghost" size="sm" className="ml-auto h-7 text-xs gap-1" data-testid={`button-view-case-${call.id}`}>
+                            <FolderOpen className="w-3 h-3" />
+                            View Case
+                          </Button>
+                        </Link>
+                      </div>
+                    )}
+
+                    {/* Editable intake fields for linked case */}
+                    {call.caseId && linkedCase && (
+                      <div className="mt-3 p-3 rounded-lg bg-muted/20 border border-border/40">
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Extracted Information</p>
+                        <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+                          <InlineEditField
+                            label="Deceased Name"
+                            value={intake.deceasedInfo?.fullName || linkedCase.deceasedName}
+                            onSave={makeIntakeSaver(linkedCase.id, "deceasedInfo", "fullName")}
+                            placeholder="Not recorded"
+                          />
+                          <InlineEditField
+                            label="Date of Death"
+                            value={intake.deceasedInfo?.dateOfDeath}
+                            onSave={makeIntakeSaver(linkedCase.id, "deceasedInfo", "dateOfDeath")}
+                            placeholder="Not recorded"
+                          />
+                          <InlineEditField
+                            label="Caller Name"
+                            value={intake.callerInfo?.name}
+                            onSave={makeIntakeSaver(linkedCase.id, "callerInfo", "name")}
+                            placeholder="Unknown Caller"
+                          />
+                          <InlineEditField
+                            label="Phone Number"
+                            value={intake.callerInfo?.phone}
+                            onSave={makeIntakeSaver(linkedCase.id, "callerInfo", "phone")}
+                            placeholder="Not recorded"
+                          />
+                          <InlineEditField
+                            label="Location"
+                            value={intake.deceasedInfo?.currentLocation}
+                            onSave={makeIntakeSaver(linkedCase.id, "deceasedInfo", "currentLocation")}
+                            placeholder="Not recorded"
+                          />
+                          <InlineEditField
+                            label="Religion"
+                            value={intake.servicePreferences?.religion}
+                            onSave={makeIntakeSaver(linkedCase.id, "servicePreferences", "religion")}
+                            placeholder="Not specified"
+                          />
+                          <InlineEditField
+                            label="Burial / Cremation"
+                            value={intake.servicePreferences?.burialOrCremation}
+                            onSave={makeIntakeSaver(linkedCase.id, "servicePreferences", "burialOrCremation")}
+                            placeholder="Not decided"
+                          />
+                          <InlineEditField
+                            label="Relationship"
+                            value={intake.callerInfo?.relationship}
+                            onSave={makeIntakeSaver(linkedCase.id, "callerInfo", "relationship")}
+                            placeholder="Not recorded"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex md:flex-col justify-end gap-2 min-w-[140px]">
+                    {call.transcript && (
+                      <>
+                        <Dialog>
+                          <DialogTrigger asChild>
+                            <Button variant="outline" size="sm" className="w-full justify-start gap-2" data-testid={`button-transcript-${call.id}`}>
+                              <FileText className="w-4 h-4" /> Transcript
+                            </Button>
+                          </DialogTrigger>
+                          <DialogContent className="max-w-2xl max-h-[80vh]">
+                            <DialogHeader>
+                              <DialogTitle>Call Transcript</DialogTitle>
+                            </DialogHeader>
+                            <ScrollArea className="h-[60vh] pr-4">
+                              <div className="whitespace-pre-wrap text-sm text-muted-foreground">
+                                {call.transcript}
+                              </div>
+                            </ScrollArea>
+                          </DialogContent>
+                        </Dialog>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full justify-start gap-2 text-purple-700 border-purple-200 hover:bg-purple-50"
+                          onClick={() => reprocessMutation.mutate(call.id)}
+                          disabled={reprocessMutation.isPending}
+                          data-testid={`button-extract-${call.id}`}
+                        >
+                          {reprocessMutation.isPending && reprocessMutation.variables === call.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Sparkles className="w-4 h-4" />
+                          )}
+                          Extract Data
+                        </Button>
+                      </>
+                    )}
+                    {!call.transcript && (
+                      <Button variant="outline" size="sm" className="w-full justify-start gap-2" disabled>
+                        <FileText className="w-4 h-4" /> Transcript
                       </Button>
-                    </>
-                  )}
-                  {!call.transcript && (
-                    <Button variant="outline" size="sm" className="w-full justify-start gap-2" disabled>
-                      <FileText className="w-4 h-4" /> Transcript
-                    </Button>
-                  )}
-                  {call.audioUrl && (
-                    <Button variant="ghost" size="sm" className="w-full justify-start gap-2 text-primary" data-testid={`button-play-${call.id}`}>
-                      <PlayCircle className="w-4 h-4" /> Play Audio
-                    </Button>
-                  )}
+                    )}
+                    {call.audioUrl && (
+                      <Button variant="ghost" size="sm" className="w-full justify-start gap-2 text-primary" data-testid={`button-play-${call.id}`}>
+                        <PlayCircle className="w-4 h-4" /> Play Audio
+                      </Button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+              </CardContent>
+            </Card>
+          );
+        })}
 
         {calls?.length === 0 && (
           <div className="text-center py-20 bg-muted/10 rounded-xl border border-dashed border-border">

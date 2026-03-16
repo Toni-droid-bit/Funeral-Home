@@ -2,6 +2,7 @@ import { VapiClient } from "@vapi-ai/server-sdk";
 import type { Express, Request, Response } from "express";
 import { storage } from "../storage";
 import { parseCallTranscriptToIntake, calculateMissingFields, mergeIntakeData } from "../intake-parser";
+import { findMatchingCase, applyIntakeToExistingCase } from "../case-matcher";
 
 const vapiClient = new VapiClient({
   token: process.env.VAPI_API_KEY || "",
@@ -311,28 +312,49 @@ export function registerVapiRoutes(app: Express) {
               console.log(`[vapi] updated case ${localCall.caseId} — ${newMissing.length} fields still missing`);
             }
           } else {
-            // ── Auto-create case from call ────────────────────────────────
+            // ── Match or create case from call ───────────────────────────
             const deceasedName = intakeData.deceasedInfo?.fullName || "Unknown (Pending)";
             const religion = intakeData.servicePreferences?.religion || "Unknown";
-            const homes = await storage.getFuneralHomes().catch(() => []);
-            const defaultHomeId = (homes as any[])[0]?.id || null;
 
-            const newCase = await storage.createCase({
-              deceasedName,
-              dateOfDeath: intakeData.deceasedInfo?.dateOfDeath
-                ? new Date(intakeData.deceasedInfo.dateOfDeath)
-                : null,
-              status: "active",
-              religion,
-              language: "English",
-              funeralHomeId: defaultHomeId,
-              notes: `Auto-created from xLink call. Caller: ${extractedCallerName || "Unknown"} (${intakeData.callerInfo?.relationship || "Unknown relationship"})`,
-              intakeData,
-              missingFields,
-            });
+            const matchResult = await findMatchingCase(deceasedName);
 
-            await storage.updateCall(localCall.id, { caseId: newCase.id });
-            console.log(`[vapi] created case ${newCase.id} ("${deceasedName}") linked to call ${localCall.id} — ${missingFields.length} fields missing`);
+            if (matchResult) {
+              // ── Existing case found — merge intake, don't duplicate ──────
+              const { matchedCase, isMultipleMatches } = matchResult;
+              await applyIntakeToExistingCase(
+                matchedCase,
+                intakeData,
+                isMultipleMatches,
+                "call",
+                new Date()
+              );
+              await storage.updateCall(localCall.id, { caseId: matchedCase.id });
+              console.log(
+                `[vapi] matched call ${localCall.id} → existing case ${matchedCase.id} ("${matchedCase.deceasedName}")` +
+                (isMultipleMatches ? " [multiple candidates — flagged for review]" : "")
+              );
+            } else {
+              // ── No match — create a new case ─────────────────────────────
+              const homes = await storage.getFuneralHomes().catch(() => []);
+              const defaultHomeId = (homes as any[])[0]?.id || null;
+
+              const newCase = await storage.createCase({
+                deceasedName,
+                dateOfDeath: intakeData.deceasedInfo?.dateOfDeath
+                  ? new Date(intakeData.deceasedInfo.dateOfDeath)
+                  : null,
+                status: "active",
+                religion,
+                language: "English",
+                funeralHomeId: defaultHomeId,
+                notes: `Auto-created from xLink call. Caller: ${extractedCallerName || "Unknown"} (${intakeData.callerInfo?.relationship || "Unknown relationship"})`,
+                intakeData,
+                missingFields,
+              });
+
+              await storage.updateCall(localCall.id, { caseId: newCase.id });
+              console.log(`[vapi] created case ${newCase.id} ("${deceasedName}") linked to call ${localCall.id} — ${missingFields.length} fields missing`);
+            }
           }
         } catch (parseErr: any) {
           console.error(`[vapi] intake parsing failed for call ${localCall.id}: ${parseErr?.message || parseErr}`);

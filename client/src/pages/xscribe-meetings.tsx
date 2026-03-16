@@ -28,6 +28,7 @@ import { format } from "date-fns";
 import { StatusBadge } from "@/components/status-badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { InlineEditField } from "@/components/inline-edit-field";
 
 // ── Audio Helpers ──
 
@@ -181,8 +182,8 @@ export default function XScribeMeetings() {
       return res.json();
     },
     enabled: !!selectedCaseId && (mode === "review" || mode === "recording"),
-    // Refresh every 5 seconds during recording to catch auto-updates
-    refetchInterval: mode === "recording" ? 5000 : false,
+    // Refresh every 3 seconds during recording — checklist updates in real time
+    refetchInterval: mode === "recording" ? 3000 : false,
   });
 
   const toggleChecklistMutation = useMutation({
@@ -237,18 +238,40 @@ export default function XScribeMeetings() {
     },
   });
 
-  // Auto-process transcript every 5 seconds during recording
+  // Auto-process transcript every 3 seconds during recording — skip if already in-flight
   useEffect(() => {
     if (mode === "recording" && selectedCaseId && fullTranscript && fullTranscript.length > 50) {
       const interval = setInterval(() => {
-        setIsProcessingTranscript(true);
-        processTranscriptMutation.mutate(fullTranscript);
-        setTimeout(() => setIsProcessingTranscript(false), 2000);
-      }, 5000); // Every 5 seconds
+        if (!processTranscriptMutation.isPending) {
+          setIsProcessingTranscript(true);
+          processTranscriptMutation.mutate(fullTranscript);
+          setTimeout(() => setIsProcessingTranscript(false), 1500);
+        }
+      }, 3000); // Every 3 seconds
 
       return () => clearInterval(interval);
     }
   }, [mode, selectedCaseId, fullTranscript]);
+
+  // Patch case intake data (for editable fields in list mode)
+  const patchCaseMutation = useMutation({
+    mutationFn: async ({ caseId, data }: { caseId: number; data: any }) => {
+      return apiRequest("PATCH", `/api/cases/${caseId}`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+    },
+    onError: () => {
+      toast({ title: "Save failed", description: "Could not save field.", variant: "destructive" });
+    },
+  });
+
+  const makeIntakeSaver = (caseId: number, section: string, field: string) => async (value: string) => {
+    await patchCaseMutation.mutateAsync({
+      caseId,
+      data: { intakeData: { [section]: { [field]: value } } },
+    });
+  };
 
   // Document generation mutation
   const generateDocsMutation = useMutation({
@@ -847,53 +870,88 @@ export default function XScribeMeetings() {
 
           {/* Checklist Panel - only show when case is selected */}
           {selectedCaseId && computedChecklist && showChecklistPrompt && (
-            <Card className="shadow-lg border-amber-200 dark:border-amber-800 h-fit">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-3">
+            <Card className="shadow-lg border-amber-200 dark:border-amber-800 h-fit max-h-[80vh] flex flex-col">
+              <CardContent className="p-4 flex flex-col overflow-hidden">
+                <div className="flex items-center justify-between mb-2">
                   <h3 className="font-medium text-foreground flex items-center gap-2">
                     <AlertCircle className="w-5 h-5 text-amber-500" />
-                    Meeting Checklist
+                    Live Checklist
+                    {isProcessingTranscript && (
+                      <span className="text-xs text-muted-foreground animate-pulse">updating…</span>
+                    )}
                   </h3>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setShowChecklistPrompt(false)}
-                    className="h-6 w-6"
-                  >
+                  <Button variant="ghost" size="icon" onClick={() => setShowChecklistPrompt(false)} className="h-6 w-6">
                     <X className="w-4 h-4" />
                   </Button>
                 </div>
 
-                <p className="text-xs text-muted-foreground mb-3">
-                  Updates automatically as you speak. Items with checkmarks have been covered.
-                </p>
+                {/* Progress bar */}
+                <div className="mb-3">
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-muted-foreground">Overall progress</span>
+                    <span className="font-semibold">{computedChecklist.completedCount}/{computedChecklist.totalItems} ({computedChecklist.completedPercentage}%)</span>
+                  </div>
+                  <div className="w-full bg-muted rounded-full h-2.5">
+                    <div
+                      className="bg-green-500 h-2.5 rounded-full transition-all duration-700"
+                      style={{ width: `${computedChecklist.completedPercentage}%` }}
+                    />
+                  </div>
+                </div>
 
-                <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                  {computedChecklist.items.map(item => {
-                    const config = CATEGORY_CONFIG[item.category];
+                {/* Critical items still missing — red alert */}
+                {(() => {
+                  const missingCritical = computedChecklist.items.filter(i => i.category === "critical" && !i.isCompleted);
+                  if (missingCritical.length === 0) return (
+                    <div className="mb-3 p-2 bg-green-50 dark:bg-green-900/20 rounded text-xs text-green-700 dark:text-green-300 font-medium flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> All critical items captured!
+                    </div>
+                  );
+                  return (
+                    <div className="mb-3 p-2 bg-red-50 dark:bg-red-900/20 rounded border border-red-200 dark:border-red-800">
+                      <p className="text-xs font-semibold text-red-700 dark:text-red-400 mb-1">
+                        ⚠ {missingCritical.length} critical item{missingCritical.length !== 1 ? "s" : ""} still needed:
+                      </p>
+                      <ul className="space-y-0.5">
+                        {missingCritical.map(i => (
+                          <li key={i.id} className="text-xs text-red-600 dark:text-red-400">• {i.question}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })()}
+
+                {/* Only show critical + important items during recording to keep it focused */}
+                <div className="space-y-1.5 overflow-y-auto flex-1">
+                  {computedChecklist.items
+                    .filter(item => item.category !== "supplementary")
+                    .map(item => {
+                    const isCriticalMissing = item.category === "critical" && !item.isCompleted;
                     return (
                       <div
                         key={item.id}
-                        className={`p-2 rounded text-sm transition-all ${
+                        className={`p-2 rounded text-sm transition-all duration-300 ${
                           item.isCompleted
-                            ? "bg-green-50 dark:bg-green-900/20"
-                            : config.bgColor
+                            ? "bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800"
+                            : isCriticalMissing
+                            ? "bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"
+                            : "bg-amber-50 dark:bg-amber-900/20"
                         }`}
                       >
                         <div className="flex items-start gap-2">
                           {item.isCompleted ? (
                             <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
                           ) : (
-                            <div className={`w-3 h-3 border-2 rounded flex-shrink-0 mt-1 ${config.iconColor} border-current`} />
+                            <div className={`w-3 h-3 border-2 rounded flex-shrink-0 mt-1 ${isCriticalMissing ? "border-red-500 text-red-500" : "border-amber-500 text-amber-500"} border-current`} />
                           )}
-                          <span className={`flex-1 ${item.isCompleted ? "text-green-700 dark:text-green-300 line-through" : "text-foreground"}`}>
+                          <span className={`flex-1 text-xs ${item.isCompleted ? "text-green-700 dark:text-green-300 line-through" : isCriticalMissing ? "text-red-700 dark:text-red-400 font-medium" : "text-foreground"}`}>
                             {item.question}
                           </span>
                         </div>
                         {!item.isCompleted && (
                           <input
                             type="text"
-                            placeholder="Type to complete..."
+                            placeholder="Type answer to complete…"
                             value={checklistInputs[item.id] || ""}
                             onChange={(e) => setChecklistInputs(prev => ({ ...prev, [item.id]: e.target.value }))}
                             onKeyDown={(e) => {
@@ -911,23 +969,6 @@ export default function XScribeMeetings() {
                       </div>
                     );
                   })}
-                </div>
-
-                <div className="mt-3 pt-3 border-t border-border/60">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs text-muted-foreground">
-                      Progress
-                    </p>
-                    <p className="text-xs font-medium">
-                      {computedChecklist.completedCount}/{computedChecklist.totalItems}
-                    </p>
-                  </div>
-                  <div className="w-full bg-muted rounded-full h-2">
-                    <div 
-                      className="bg-green-500 h-2 rounded-full transition-all duration-500" 
-                      style={{ width: `${computedChecklist.completedPercentage}%` }}
-                    />
-                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -997,6 +1038,37 @@ export default function XScribeMeetings() {
             </Badge>
           )}
         </div>
+
+        {/* Critical items missing banner */}
+        {computedChecklist && (() => {
+          const missingCritical = computedChecklist.items.filter(
+            (item) => item.category === "critical" && !item.isCompleted
+          );
+          if (missingCritical.length === 0) return null;
+          return (
+            <div className="rounded-lg border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/20 p-4">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-semibold text-red-700 dark:text-red-300">
+                    {missingCritical.length} critical item{missingCritical.length !== 1 ? "s" : ""} still missing
+                  </p>
+                  <p className="text-sm text-red-600 dark:text-red-400 mt-1">
+                    These must be answered before the family leaves:
+                  </p>
+                  <ul className="mt-2 space-y-1">
+                    {missingCritical.map((item) => (
+                      <li key={item.id} className="flex items-center gap-2 text-sm text-red-700 dark:text-red-300">
+                        <div className="w-3 h-3 rounded-full border-2 border-red-500 flex-shrink-0" />
+                        {item.question}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Editable transcript */}
@@ -1287,6 +1359,68 @@ export default function XScribeMeetings() {
                           </ul>
                         </div>
                       )}
+
+                    {/* Editable intake fields for linked case */}
+                    {meeting.caseId && (() => {
+                      const linkedCase = cases?.find((c: any) => c.id === meeting.caseId);
+                      if (!linkedCase) return null;
+                      const intake = linkedCase.intakeData || {};
+                      return (
+                        <div className="mt-2 p-3 rounded-lg bg-muted/20 border border-border/40">
+                          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Extracted Information</p>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+                            <InlineEditField
+                              label="Deceased Name"
+                              value={intake.deceasedInfo?.fullName || linkedCase.deceasedName}
+                              onSave={makeIntakeSaver(linkedCase.id, "deceasedInfo", "fullName")}
+                              placeholder="Not recorded"
+                            />
+                            <InlineEditField
+                              label="Date of Death"
+                              value={intake.deceasedInfo?.dateOfDeath}
+                              onSave={makeIntakeSaver(linkedCase.id, "deceasedInfo", "dateOfDeath")}
+                              placeholder="Not recorded"
+                            />
+                            <InlineEditField
+                              label="Caller Name"
+                              value={intake.callerInfo?.name}
+                              onSave={makeIntakeSaver(linkedCase.id, "callerInfo", "name")}
+                              placeholder="Not recorded"
+                            />
+                            <InlineEditField
+                              label="Phone Number"
+                              value={intake.callerInfo?.phone}
+                              onSave={makeIntakeSaver(linkedCase.id, "callerInfo", "phone")}
+                              placeholder="Not recorded"
+                            />
+                            <InlineEditField
+                              label="Location"
+                              value={intake.deceasedInfo?.currentLocation}
+                              onSave={makeIntakeSaver(linkedCase.id, "deceasedInfo", "currentLocation")}
+                              placeholder="Not recorded"
+                            />
+                            <InlineEditField
+                              label="Religion"
+                              value={intake.servicePreferences?.religion}
+                              onSave={makeIntakeSaver(linkedCase.id, "servicePreferences", "religion")}
+                              placeholder="Not specified"
+                            />
+                            <InlineEditField
+                              label="Burial / Cremation"
+                              value={intake.servicePreferences?.burialOrCremation}
+                              onSave={makeIntakeSaver(linkedCase.id, "servicePreferences", "burialOrCremation")}
+                              placeholder="Not decided"
+                            />
+                            <InlineEditField
+                              label="Relationship"
+                              value={intake.callerInfo?.relationship}
+                              onSave={makeIntakeSaver(linkedCase.id, "callerInfo", "relationship")}
+                              placeholder="Not recorded"
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   <div className="flex md:flex-col justify-end gap-2 min-w-[140px]">

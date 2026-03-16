@@ -34,61 +34,215 @@ export const cases = pgTable("cases", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// Intake data structure for type safety
+// ─── COMPREHENSIVE INTAKE DATA SCHEMA ───
+// Covers all fields from the standard funeral arrangement form
 export const intakeDataSchema = z.object({
+
+  // ── DECEASED DETAILS ──
+  deceasedInfo: z.object({
+    // Core identification (existing, kept for compat)
+    fullName: z.string().optional(),          // Full legal name
+    dateOfDeath: z.string().optional(),        // YYYY-MM-DD
+    dateOfBirth: z.string().optional(),        // YYYY-MM-DD
+    age: z.number().optional(),
+    currentLocation: z.string().optional(),    // Where the body currently is
+    causeOfDeath: z.string().optional(),
+    // Extended deceased details
+    title: z.string().optional(),              // Mr / Mrs / Ms / Dr / Rev etc.
+    forenames: z.string().optional(),          // Forename(s) separately
+    surname: z.string().optional(),
+    knownAs: z.string().optional(),            // Preferred / known-as name
+    prePaidPlan: z.string().optional(),        // Y/N
+    prePaidPlanRef: z.string().optional(),     // Reference number
+    gender: z.string().optional(),
+    religion: z.string().optional(),           // Religion of deceased
+    maritalStatus: z.string().optional(),
+    occupation: z.string().optional(),
+    dateOfRegistration: z.string().optional(), // Death registration date YYYY-MM-DD
+    funeralType: z.string().optional(),        // Adult Standard / Adult Pre-Paid / Attended-CMA / Unattended-CMA / Unattended-Other / Child / Repatriation / Environmental
+    // Home address (flattened for easy fieldMapping)
+    homeStreet: z.string().optional(),
+    homeTown: z.string().optional(),
+    homeCounty: z.string().optional(),
+    homePostcode: z.string().optional(),
+    homeCountry: z.string().optional(),
+    // Place of death
+    placeOfDeath: z.string().optional(),       // Hospital name, home address, hospice, etc.
+    placeOfDeathAddress: z.string().optional(),
+    // GP details
+    gpName: z.string().optional(),
+    gpSurgery: z.string().optional(),          // Surgery name and address
+  }).optional(),
+
+  // ── CLIENT / NEXT OF KIN ──
   callerInfo: z.object({
+    // Existing (kept for compat)
     name: z.string().optional(),
     phone: z.string().optional(),
     relationship: z.string().optional(),
     email: z.string().optional(),
+    // Extended
+    title: z.string().optional(),
+    forenames: z.string().optional(),
+    surname: z.string().optional(),
+    addressStreet: z.string().optional(),
+    addressTown: z.string().optional(),
+    addressCounty: z.string().optional(),
+    addressPostcode: z.string().optional(),
+    addressCountry: z.string().optional(),
+    phoneMobile: z.string().optional(),
+    phoneHome: z.string().optional(),
+    marketingPreferences: z.string().optional(), // Telephone / Email / Postal
+    governmentSupport: z.string().optional(),     // DWP / SSS
+    funeralFinance: z.string().optional(),        // Finance arrangement
+    estimatedCost: z.string().optional(),
+    probate: z.string().optional(),
+    masonry: z.string().optional(),
   }).optional(),
-  deceasedInfo: z.object({
-    fullName: z.string().optional(),
-    dateOfDeath: z.string().optional(),
-    dateOfBirth: z.string().optional(),
-    age: z.number().optional(),
-    currentLocation: z.string().optional(), // hospital, home, coroner, etc.
-    causeOfDeath: z.string().optional(),
+
+  // ── BILLING DETAILS ──
+  billing: z.object({
+    title: z.string().optional(),
+    name: z.string().optional(),               // Full name of billing contact
+    address: z.string().optional(),
+    phoneHome: z.string().optional(),
+    phoneMobile: z.string().optional(),
+    phoneWork: z.string().optional(),
+    email: z.string().optional(),
+    vulnerableClient: z.string().optional(),   // YES/NO + type if yes
   }).optional(),
+
+  // ── FUNERAL SOURCE ──
+  funeralSource: z.object({
+    source: z.string().optional(),             // Recommended by Professional / Used Before / Location/Reputation / Friends/Family / Pre-Paid Plan / Other
+    details: z.string().optional(),
+  }).optional(),
+
+  // ── PREPARATION ──
+  preparation: z.object({
+    cremationForms: z.string().optional(),     // Doctor 1 / Medical Examiner / Coroner / N/A
+    doctorName: z.string().optional(),
+    doctorAddress: z.string().optional(),
+    removeFromLocation: z.string().optional(), // Where & when to collect
+    embalming: z.string().optional(),          // Yes / No + details
+    infectiousDetails: z.string().optional(),
+    pacemakerImplant: z.string().optional(),   // Yes / No + type
+    bodySize: z.string().optional(),
+    coffinSize: z.string().optional(),
+    coffinType: z.string().optional(),         // Coffin / Casket type
+    urnType: z.string().optional(),
+    coffinPlateText: z.string().optional(),
+    dressed: z.string().optional(),            // Own Clothes / Gown + colour
+    viewingRequested: z.string().optional(),   // YES / NO
+    viewingDateTime: z.string().optional(),    // Date and time for viewing
+    careProgress: z.string().optional(),       // Prepared / Dressed / Encoffined / Ready for Viewing
+    viewingRestrictions: z.string().optional(),
+    jewellery: z.string().optional(),          // Remove / Remain
+    graveDetails: z.string().optional(),       // Grave size / type / ref
+    dispositionOfAshes: z.string().optional(),
+  }).optional(),
+
+  // ── FUNERAL SERVICE ──
+  funeralService: z.object({
+    dispositionType: z.string().optional(),    // Burial / Cremation / Repatriation
+    serviceDate: z.string().optional(),        // YYYY-MM-DD
+    serviceTime: z.string().optional(),
+    commitalDate: z.string().optional(),       // YYYY-MM-DD
+    commitalTime: z.string().optional(),
+    officiant: z.string().optional(),          // Name / type of officiant
+    venueName: z.string().optional(),          // Church / crematorium / venue
+    venueDenomination: z.string().optional(),
+    venueAddress: z.string().optional(),
+    hearseType: z.string().optional(),
+    limousines: z.string().optional(),         // Number / type
+    leavingFrom: z.string().optional(),
+    routeVia: z.string().optional(),
+    commitalAt: z.string().optional(),
+    returningTo: z.string().optional(),
+    music: z.string().optional(),             // Organist / Wesley / Obitus / CDs + selections
+    flowersAccepted: z.string().optional(),    // Yes / No / Family Only
+    flowersDelivery: z.string().optional(),
+    flowerNotes: z.string().optional(),
+  }).optional(),
+
+  // ── ORDERS OF SERVICE ──
+  ordersOfService: z.object({
+    quantity: z.string().optional(),
+    styleDesign: z.string().optional(),
+    photos: z.string().optional(),             // Yes / No
+    sentToPrinter: z.string().optional(),
+    proofReceived: z.string().optional(),
+    proofApproved: z.string().optional(),
+    orderConfirmed: z.string().optional(),
+    orderReceived: z.string().optional(),
+  }).optional(),
+
+  // ── DONATIONS ──
+  donations: z.object({
+    requested: z.string().optional(),          // Yes / No
+    closingDate: z.string().optional(),
+    recipients: z.string().optional(),         // Up to 3 charity names
+  }).optional(),
+
+  // ── ONLINE TRIBUTE ──
+  onlineTribute: z.object({
+    requested: z.string().optional(),          // Yes / No
+    setupBy: z.string().optional(),
+    notes: z.string().optional(),
+  }).optional(),
+
+  // ── NEWSPAPER NOTICES ──
+  newspaperNotices: z.object({
+    entries: z.string().optional(),            // Free text describing all notices
+  }).optional(),
+
+  // ── LEGACY / EXISTING (kept for backward compatibility) ──
   servicePreferences: z.object({
-    burialOrCremation: z.string().optional(), // burial, cremation, undecided
+    burialOrCremation: z.string().optional(),
     religion: z.string().optional(),
-    subTradition: z.string().optional(), // e.g., Church of England, Catholic
-    urgency: z.string().optional(), // normal, urgent-24hr
-    serviceType: z.string().optional(), // full service, direct cremation, etc.
-    cemeteryOrCrematorium: z.string().optional(), // name of cemetery or crematorium
-    clothing: z.string().optional(), // clothing preferences
-    obituary: z.string().optional(), // obituary details
-    flowers: z.string().optional(), // flower preferences
-    music: z.string().optional(), // music selections
-    readings: z.string().optional(), // readings or poems
-    reception: z.string().optional(), // reception/wake details
-    donations: z.string().optional(), // charity donations info
+    subTradition: z.string().optional(),
+    urgency: z.string().optional(),
+    serviceType: z.string().optional(),
+    cemeteryOrCrematorium: z.string().optional(),
+    clothing: z.string().optional(),
+    obituary: z.string().optional(),
+    flowers: z.string().optional(),
+    music: z.string().optional(),
+    readings: z.string().optional(),
+    reception: z.string().optional(),
+    donations: z.string().optional(),
   }).optional(),
+
   appointment: z.object({
     preferredDate: z.string().optional(),
     preferredTime: z.string().optional(),
     attendeeCount: z.number().optional(),
   }).optional(),
+
+  // ── FREE TEXT ──
+  additionalServices: z.string().optional(),
+  generalNotes: z.string().optional(),
 });
 
 export type IntakeData = z.infer<typeof intakeDataSchema>;
 
-// Required fields checklist
+// Critical required fields — must be answered before the family leaves
 export const REQUIRED_INTAKE_FIELDS = [
+  "deceasedInfo.fullName",
+  "deceasedInfo.dateOfDeath",
+  "deceasedInfo.dateOfBirth",
+  "deceasedInfo.religion",
+  "deceasedInfo.funeralType",
   "callerInfo.name",
   "callerInfo.phone",
   "callerInfo.relationship",
-  "deceasedInfo.fullName",
-  "deceasedInfo.dateOfDeath",
-  "deceasedInfo.currentLocation",
-  "servicePreferences.burialOrCremation",
-  "servicePreferences.religion",
+  "deceasedInfo.placeOfDeath",
+  "funeralService.dispositionType",
 ] as const;
 
 export const calls = pgTable("calls", {
   id: serial("id").primaryKey(),
-  vapiCallId: text("vapi_call_id"), // Vapi.ai call ID for webhook matching
+  vapiCallId: text("vapi_call_id"),
   caseId: integer("case_id").references(() => cases.id),
   callerPhone: text("caller_phone").notNull(),
   callerName: text("caller_name"),
@@ -97,8 +251,8 @@ export const calls = pgTable("calls", {
   summary: text("summary"),
   sentiment: text("sentiment"),
   audioUrl: text("audio_url"),
-  status: text("status").default("completed"), // missed, completed, in-progress
-  direction: text("direction").default("inbound"), // inbound, outbound
+  status: text("status").default("completed"),
+  direction: text("direction").default("inbound"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -109,41 +263,41 @@ export const meetings = pgTable("meetings", {
   language: text("language").default("English"),
   transcript: text("transcript"),
   summary: text("summary"),
-  actionItems: jsonb("action_items"), // Array of strings
+  actionItems: jsonb("action_items"),
   audioUrl: text("audio_url"),
-  status: text("status").default("processing"), // recording, processing, completed
+  status: text("status").default("processing"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const documents = pgTable("documents", {
   id: serial("id").primaryKey(),
   caseId: integer("case_id").references(() => cases.id),
-  type: text("type").notNull(), // contract, eulogy, obituary, service_plan
+  type: text("type").notNull(),
   title: text("title").notNull(),
-  content: text("content"), // HTML or Markdown content
+  content: text("content"),
   language: text("language").default("English"),
-  status: text("status").default("draft"), // draft, final
+  status: text("status").default("draft"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// Checklist templates for intake meetings
 export const checklistTemplates = pgTable("checklist_templates", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   description: text("description"),
   isDefault: boolean("is_default").default(false),
   funeralHomeId: integer("funeral_home_id").references(() => funeralHomes.id),
-  items: jsonb("items").notNull(), // ChecklistItem[]
+  items: jsonb("items").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// Checklist item schema for type safety
+// Checklist item schema — includes `section` for UI grouping
 export const checklistItemSchema = z.object({
   id: z.string(),
   question: z.string(),
   category: z.enum(["critical", "important", "supplementary"]),
-  fieldMapping: z.string().optional(), // Maps to intakeData field like "deceasedInfo.fullName"
+  section: z.string().optional(),          // e.g. "Deceased Details", "Client Details"
+  fieldMapping: z.string().optional(),     // dot-path into intakeData, e.g. "deceasedInfo.fullName"
   isCustom: z.boolean().default(false),
 });
 

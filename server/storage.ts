@@ -9,7 +9,7 @@ import {
   type ChecklistTemplate, type InsertChecklistTemplate
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, ilike } from "drizzle-orm";
 
 export interface IStorage {
   // Users (Auth handled by replit auth integrations mostly, but useful to have)
@@ -26,6 +26,10 @@ export interface IStorage {
   getCase(id: number): Promise<Case | undefined>;
   createCase(data: InsertCase): Promise<Case>;
   updateCase(id: number, data: UpdateCaseRequest): Promise<Case>;
+  deleteCase(id: number): Promise<void>;
+  deleteAllCases(): Promise<void>;
+  resetAllData(): Promise<void>;
+  findCasesByDeceasedName(name: string): Promise<Case[]>;
 
   // Calls (xLink)
   getCalls(): Promise<Call[]>;
@@ -40,6 +44,7 @@ export interface IStorage {
   getMeeting(id: number): Promise<Meeting | undefined>;
   getMeetingsByCaseId(caseId: number): Promise<Meeting[]>;
   createMeeting(data: InsertMeeting): Promise<Meeting>;
+  updateMeeting(id: number, data: Partial<InsertMeeting>): Promise<Meeting>;
 
   // Documents
   getDocuments(): Promise<Document[]>;
@@ -107,6 +112,36 @@ export class DatabaseStorage implements IStorage {
     return c;
   }
 
+  async deleteCase(id: number): Promise<void> {
+    // Null out FK references on related records before deleting
+    await db.update(calls).set({ caseId: null }).where(eq(calls.caseId, id));
+    await db.update(meetings).set({ caseId: null }).where(eq(meetings.caseId, id));
+    await db.delete(documents).where(eq(documents.caseId, id));
+    await db.delete(cases).where(eq(cases.id, id));
+  }
+
+  async deleteAllCases(): Promise<void> {
+    // Null out FK references, delete documents, then delete all cases
+    await db.update(calls).set({ caseId: null });
+    await db.update(meetings).set({ caseId: null });
+    await db.delete(documents);
+    await db.delete(cases);
+  }
+
+  async resetAllData(): Promise<void> {
+    await db.delete(documents);
+    await db.delete(calls);
+    await db.delete(meetings);
+    await db.delete(cases);
+  }
+
+  async findCasesByDeceasedName(name: string): Promise<Case[]> {
+    // Case-insensitive partial match, most recently created first
+    return await db.select().from(cases)
+      .where(ilike(cases.deceasedName, `%${name}%`))
+      .orderBy(desc(cases.createdAt));
+  }
+
   // Calls
   async getCalls(): Promise<Call[]> {
     return await db.select().from(calls).orderBy(desc(calls.createdAt));
@@ -152,6 +187,11 @@ export class DatabaseStorage implements IStorage {
 
   async createMeeting(data: InsertMeeting): Promise<Meeting> {
     const [m] = await db.insert(meetings).values(data).returning();
+    return m;
+  }
+
+  async updateMeeting(id: number, data: Partial<InsertMeeting>): Promise<Meeting> {
+    const [m] = await db.update(meetings).set(data).where(eq(meetings.id, id)).returning();
     return m;
   }
 

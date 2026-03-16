@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useCase } from "@/hooks/use-cases";
-import { useParams } from "wouter";
+import { useParams, useLocation } from "wouter";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -9,12 +9,13 @@ import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Phone, Mic, FileText, ArrowLeft, Loader2, Calendar, CheckCircle2, ClipboardList } from "lucide-react";
+import { Phone, Mic, FileText, ArrowLeft, Loader2, Calendar, CheckCircle2, ClipboardList, Trash2, Pencil, AlertCircle } from "lucide-react";
 import { format } from "date-fns";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { InlineEditField } from "@/components/inline-edit-field";
 import type { Call, Meeting, Document } from "@shared/schema";
 
 interface CaseWithRelations {
@@ -34,6 +35,7 @@ interface ChecklistItemWithStatus {
   id: string;
   question: string;
   category: string;
+  section?: string;
   fieldMapping?: string;
   isCompleted: boolean;
   isManuallyCompleted: boolean;
@@ -49,6 +51,7 @@ interface ComputedChecklist {
 export default function CaseDetail() {
   const { id } = useParams();
   const caseId = Number(id);
+  const [, navigate] = useLocation();
   const { data: caseData, isLoading } = useCase(caseId) as { data: CaseWithRelations | null | undefined, isLoading: boolean };
   const { toast } = useToast();
   const [transcriptDialog, setTranscriptDialog] = useState<{ open: boolean; content: string; director: string }>({ open: false, content: "", director: "" });
@@ -83,6 +86,33 @@ export default function CaseDetail() {
     enabled: !!caseId,
   });
 
+  const patchCaseMutation = useMutation({
+    mutationFn: async (data: any) => {
+      return apiRequest("PATCH", `/api/cases/${caseId}`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", caseId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+    },
+    onError: () => {
+      toast({ title: "Save failed", description: "Could not save changes.", variant: "destructive" });
+    },
+  });
+
+  const deleteCaseMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest("DELETE", `/api/cases/${caseId}`, undefined);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+      navigate("/cases");
+      toast({ title: "Case deleted", description: "The case has been permanently deleted." });
+    },
+    onError: () => {
+      toast({ title: "Delete failed", description: "Could not delete this case.", variant: "destructive" });
+    },
+  });
+
   const toggleChecklistMutation = useMutation({
     mutationFn: async (itemId: string) => {
       return apiRequest("POST", `/api/cases/${caseId}/checklist/${itemId}/toggle`, {});
@@ -104,21 +134,27 @@ export default function CaseDetail() {
       return apiRequest("POST", `/api/cases/${caseId}/generate-intake-summary`, {});
     },
     onSuccess: () => {
-      // Invalidate the case detail query to refresh documents
       queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", caseId] });
-      toast({
-        title: "Document Generated",
-        description: "Intake summary has been created successfully.",
-      });
+      toast({ title: "Document Generated", description: "Intake summary has been created successfully." });
     },
     onError: (error: any) => {
-      toast({
-        title: "Failed to generate document",
-        description: error?.message || "Could not generate intake summary",
-        variant: "destructive",
-      });
+      toast({ title: "Failed to generate document", description: error?.message || "Could not generate intake summary", variant: "destructive" });
     },
   });
+
+  const handleDeleteCase = () => {
+    if (confirm(`Are you sure you want to permanently delete the case for "${caseData?.deceasedName}"? This cannot be undone.`)) {
+      deleteCaseMutation.mutate();
+    }
+  };
+
+  const saveField = async (data: any) => {
+    await patchCaseMutation.mutateAsync(data);
+  };
+
+  const saveIntakeField = async (section: string, field: string, value: string) => {
+    await saveField({ intakeData: { [section]: { [field]: value } } });
+  };
 
   if (isLoading) {
     return (
@@ -139,6 +175,8 @@ export default function CaseDetail() {
     );
   }
 
+  const intake = (caseData.intakeData as any) || {};
+
   const categoryConfig: Record<string, { label: string; bgColor: string; iconColor: string }> = {
     critical: { label: "Critical", bgColor: "bg-red-50 dark:bg-red-900/20", iconColor: "text-red-600 dark:text-red-400" },
     important: { label: "Important", bgColor: "bg-amber-50 dark:bg-amber-900/20", iconColor: "text-amber-600 dark:text-amber-400" },
@@ -152,6 +190,21 @@ export default function CaseDetail() {
     return acc;
   }, {} as Record<string, ChecklistItemWithStatus[]>) || {};
 
+  // Missing items grouped by section (for sidebar display)
+  const missingSections = (() => {
+    if (!checklist?.items) return {} as Record<string, ChecklistItemWithStatus[]>;
+    return checklist.items
+      .filter(item => !item.isCompleted)
+      .reduce((acc, item) => {
+        const sec = item.section || "General";
+        if (!acc[sec]) acc[sec] = [];
+        acc[sec].push(item);
+        return acc;
+      }, {} as Record<string, ChecklistItemWithStatus[]>);
+  })();
+
+  const missingCriticalCount = checklist?.items?.filter(i => i.category === "critical" && !i.isCompleted).length ?? 0;
+
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       <div className="flex items-center gap-4">
@@ -160,8 +213,20 @@ export default function CaseDetail() {
             <ArrowLeft className="w-5 h-5" />
           </Button>
         </Link>
-        <div>
-          <h1 className="text-3xl font-display font-bold text-primary">{caseData.deceasedName}</h1>
+        <div className="flex-1">
+          {/* Inline editable case name */}
+          <div className="flex items-center gap-2 group">
+            <h1 className="text-3xl font-display font-bold text-primary leading-tight">
+              <InlineEditField
+                value={caseData.deceasedName}
+                onSave={(v) => saveField({ deceasedName: v })}
+                placeholder="Case Name"
+                displayClassName="text-3xl font-display font-bold text-primary"
+                inputClassName="text-3xl font-display font-bold text-primary border-primary"
+              />
+            </h1>
+            <Pencil className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+          </div>
           <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
             <StatusBadge status={caseData.status || "active"} />
             <span>•</span>
@@ -171,6 +236,16 @@ export default function CaseDetail() {
             </span>
           </div>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-destructive border-destructive/30 hover:bg-destructive/10 gap-2"
+          onClick={handleDeleteCase}
+          disabled={deleteCaseMutation.isPending}
+        >
+          {deleteCaseMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+          Delete Case
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -180,22 +255,154 @@ export default function CaseDetail() {
               <CardTitle>Case Information</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Top-level case fields */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <h4 className="text-sm font-medium text-muted-foreground">Religion / Tradition</h4>
-                  <p className="text-lg font-medium">{caseData.religion || "Secular"}</p>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-1">Religion / Tradition</h4>
+                  <InlineEditField
+                    value={caseData.religion}
+                    onSave={(v) => saveField({ religion: v })}
+                    placeholder="Not specified"
+                    displayClassName="text-base font-medium"
+                  />
                 </div>
                 <div>
-                  <h4 className="text-sm font-medium text-muted-foreground">Preferred Language</h4>
-                  <p className="text-lg font-medium">{caseData.language || "English"}</p>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-1">Preferred Language</h4>
+                  <InlineEditField
+                    value={caseData.language}
+                    onSave={(v) => saveField({ language: v })}
+                    placeholder="English"
+                    displayClassName="text-base font-medium"
+                  />
                 </div>
               </div>
+
               <Separator />
+
+              {/* Intake data fields */}
+              <div>
+                <h4 className="text-sm font-semibold text-foreground mb-3">Extracted Intake Data</h4>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+                  <InlineEditField
+                    label="Deceased Full Name"
+                    value={intake.deceasedInfo?.fullName}
+                    onSave={(v) => saveIntakeField("deceasedInfo", "fullName", v)}
+                    placeholder="Not recorded"
+                  />
+                  <InlineEditField
+                    label="Date of Death"
+                    value={intake.deceasedInfo?.dateOfDeath}
+                    onSave={(v) => saveIntakeField("deceasedInfo", "dateOfDeath", v)}
+                    placeholder="Not recorded"
+                  />
+                  <InlineEditField
+                    label="Date of Birth"
+                    value={intake.deceasedInfo?.dateOfBirth}
+                    onSave={(v) => saveIntakeField("deceasedInfo", "dateOfBirth", v)}
+                    placeholder="Not recorded"
+                  />
+                  <InlineEditField
+                    label="Current Location"
+                    value={intake.deceasedInfo?.currentLocation}
+                    onSave={(v) => saveIntakeField("deceasedInfo", "currentLocation", v)}
+                    placeholder="Not recorded"
+                  />
+                  <InlineEditField
+                    label="Cause of Death"
+                    value={intake.deceasedInfo?.causeOfDeath}
+                    onSave={(v) => saveIntakeField("deceasedInfo", "causeOfDeath", v)}
+                    placeholder="Not recorded"
+                  />
+                </div>
+              </div>
+
+              <Separator />
+
+              <div>
+                <h4 className="text-sm font-semibold text-foreground mb-3">Caller / Next of Kin</h4>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+                  <InlineEditField
+                    label="Caller Name"
+                    value={intake.callerInfo?.name}
+                    onSave={(v) => saveIntakeField("callerInfo", "name", v)}
+                    placeholder="Not recorded"
+                  />
+                  <InlineEditField
+                    label="Phone Number"
+                    value={intake.callerInfo?.phone}
+                    onSave={(v) => saveIntakeField("callerInfo", "phone", v)}
+                    placeholder="Not recorded"
+                  />
+                  <InlineEditField
+                    label="Relationship"
+                    value={intake.callerInfo?.relationship}
+                    onSave={(v) => saveIntakeField("callerInfo", "relationship", v)}
+                    placeholder="Not recorded"
+                  />
+                  <InlineEditField
+                    label="Email"
+                    value={intake.callerInfo?.email}
+                    onSave={(v) => saveIntakeField("callerInfo", "email", v)}
+                    placeholder="Not recorded"
+                  />
+                </div>
+              </div>
+
+              <Separator />
+
+              <div>
+                <h4 className="text-sm font-semibold text-foreground mb-3">Service Preferences</h4>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+                  <InlineEditField
+                    label="Burial / Cremation"
+                    value={intake.servicePreferences?.burialOrCremation}
+                    onSave={(v) => saveIntakeField("servicePreferences", "burialOrCremation", v)}
+                    placeholder="Not decided"
+                  />
+                  <InlineEditField
+                    label="Religion"
+                    value={intake.servicePreferences?.religion}
+                    onSave={(v) => saveIntakeField("servicePreferences", "religion", v)}
+                    placeholder="Not specified"
+                  />
+                  <InlineEditField
+                    label="Service Type"
+                    value={intake.servicePreferences?.serviceType}
+                    onSave={(v) => saveIntakeField("servicePreferences", "serviceType", v)}
+                    placeholder="Not specified"
+                  />
+                  <InlineEditField
+                    label="Cemetery / Crematorium"
+                    value={intake.servicePreferences?.cemeteryOrCrematorium}
+                    onSave={(v) => saveIntakeField("servicePreferences", "cemeteryOrCrematorium", v)}
+                    placeholder="Not specified"
+                  />
+                </div>
+              </div>
+
+              <Separator />
+
               <div>
                 <h4 className="text-sm font-medium text-muted-foreground mb-2">Notes</h4>
-                <p className="text-sm leading-relaxed text-foreground/80 bg-muted/30 p-4 rounded-md">
-                  {caseData.notes || "No additional notes provided."}
-                </p>
+                {(() => {
+                  const raw = caseData.notes || "";
+                  const lines = raw.split("\n");
+                  const warnings = lines.filter(l => l.startsWith("⚠️"));
+                  const rest = lines.filter(l => !l.startsWith("⚠️")).join("\n").trim();
+                  return (
+                    <>
+                      {warnings.map((w, i) => (
+                        <div key={i} className="flex items-start gap-2 mb-2 p-3 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 text-amber-800 dark:text-amber-300 text-sm">
+                          <span className="shrink-0">⚠️</span>
+                          <span>{w.replace("⚠️", "").trim()}</span>
+                        </div>
+                      ))}
+                      <p className="text-sm leading-relaxed text-foreground/80 bg-muted/30 p-4 rounded-md">
+                        {rest || "No additional notes provided."}
+                      </p>
+                    </>
+                  );
+                })()}
               </div>
             </CardContent>
           </Card>
@@ -245,7 +452,7 @@ export default function CaseDetail() {
                   {checklist && (
                     <div className="space-y-4">
                       <Progress value={checklist.completedPercentage} className="h-2" />
-                      
+
                       {["critical", "important", "supplementary"].map(category => {
                         const items = groupedChecklist[category] || [];
                         if (items.length === 0) return null;
@@ -457,6 +664,81 @@ export default function CaseDetail() {
         </Dialog>
 
         <div className="space-y-6">
+          {/* Completion progress card */}
+          {checklist && (
+            <Card className="shadow-sm">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg flex items-center justify-between gap-2">
+                  <span>Case Completion</span>
+                  <span className={`text-2xl font-bold tabular-nums ${
+                    checklist.completedPercentage >= 80 ? "text-green-600 dark:text-green-400"
+                    : checklist.completedPercentage >= 50 ? "text-amber-600 dark:text-amber-400"
+                    : "text-red-600 dark:text-red-400"
+                  }`}>
+                    {checklist.completedPercentage}%
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <Progress value={checklist.completedPercentage} className="h-3" />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {checklist.completedCount} of {checklist.totalItems} items answered
+                  </p>
+                </div>
+
+                {missingCriticalCount > 0 && (
+                  <div className="rounded-md border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 p-3 flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+                    <p className="text-sm text-red-700 dark:text-red-300 font-medium">
+                      {missingCriticalCount} critical item{missingCriticalCount !== 1 ? "s" : ""} unanswered
+                    </p>
+                  </div>
+                )}
+
+                {Object.keys(missingSections).length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                      Still needed
+                    </p>
+                    <div className="space-y-3">
+                      {Object.entries(missingSections).map(([section, items]) => (
+                        <div key={section}>
+                          <p className="text-xs font-medium text-foreground mb-1">{section}</p>
+                          <ul className="space-y-1">
+                            {items.map(item => (
+                              <li key={item.id} className={`flex items-center gap-1.5 text-xs ${
+                                item.category === "critical"
+                                  ? "text-red-600 dark:text-red-400"
+                                  : item.category === "important"
+                                  ? "text-amber-600 dark:text-amber-400"
+                                  : "text-muted-foreground"
+                              }`}>
+                                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                                  item.category === "critical" ? "bg-red-500"
+                                  : item.category === "important" ? "bg-amber-500"
+                                  : "bg-muted-foreground"
+                                }`} />
+                                {item.question}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {Object.keys(missingSections).length === 0 && (
+                  <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span className="text-sm font-medium">All items complete!</span>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           <Card className="bg-primary/5 border-primary/10 shadow-sm">
             <CardHeader>
               <CardTitle className="text-lg">Quick Actions</CardTitle>

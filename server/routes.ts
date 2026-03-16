@@ -8,6 +8,7 @@ import { registerVapiRoutes } from "./vapi";
 import { setupDeepgramWebSocket } from "./deepgram";
 import { getFieldLabel, calculateMissingFields, validateIntakeData, parseCallTranscriptToIntake, parseMeetingTranscriptToIntake, mergeIntakeData, generateIntakeDocument } from "./intake-parser";
 import { IntakeData, REQUIRED_INTAKE_FIELDS, intakeDataSchema, checklistTemplateItemsSchema, type ChecklistItem } from "@shared/schema";
+import { findMatchingCase, applyIntakeToExistingCase } from "./case-matcher";
 
 // Helper to create or update intake summary document
 async function updateIntakeDocument(caseId: number, caseData: any, intakeData: IntakeData) {
@@ -102,6 +103,54 @@ export async function registerRoutes(
     }
   });
 
+  // PATCH /api/cases/:id — partial update (case fields + intake data deep merge)
+  app.patch("/api/cases/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    const caseItem = await storage.getCase(id);
+    if (!caseItem) return res.status(404).json({ message: "Case not found" });
+
+    const { intakeData: newIntakeData, ...directFields } = req.body;
+    const updates: any = {};
+
+    // Apply direct case fields (deceasedName, religion, language, status, etc.)
+    const allowedFields = ["deceasedName", "religion", "language", "status", "notes", "dateOfDeath", "appointmentDate"];
+    for (const field of allowedFields) {
+      if (directFields[field] !== undefined) updates[field] = directFields[field];
+    }
+
+    // Deep merge intake data if provided
+    if (newIntakeData) {
+      const existingIntake = (caseItem.intakeData as IntakeData) || {};
+      const merged = mergeIntakeData(existingIntake, validateIntakeData(newIntakeData));
+      updates.intakeData = merged;
+      updates.missingFields = calculateMissingFields(merged);
+    }
+
+    const updated = await storage.updateCase(id, updates);
+    res.json(updated);
+  });
+
+  // DELETE /api/cases/:id — delete a single case
+  app.delete("/api/cases/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    const caseItem = await storage.getCase(id);
+    if (!caseItem) return res.status(404).json({ message: "Case not found" });
+    await storage.deleteCase(id);
+    res.status(204).send();
+  });
+
+  // DELETE /api/cases — delete all cases
+  app.delete("/api/cases", async (req, res) => {
+    await storage.deleteAllCases();
+    res.status(204).send();
+  });
+
+  // POST /api/reset — wipe all cases, calls, meetings, and documents
+  app.post("/api/reset", async (req, res) => {
+    await storage.resetAllData();
+    res.json({ message: "Database reset complete" });
+  });
+
   // Get calls for a specific case
   app.get("/api/cases/:id/calls", async (req, res) => {
     const id = Number(req.params.id);
@@ -162,26 +211,15 @@ export async function registerRoutes(
       return res.status(404).json({ message: "Case not found" });
     }
 
-    // Validate incoming intake data
     const { intakeData: newIntakeData } = req.body;
     const validatedNewData = validateIntakeData(newIntakeData || {});
     const existingIntake = (caseItem.intakeData as IntakeData) || {};
 
-    // Deep merge new data with existing
-    const merged = {
-      callerInfo: { ...existingIntake.callerInfo, ...validatedNewData.callerInfo },
-      deceasedInfo: { ...existingIntake.deceasedInfo, ...validatedNewData.deceasedInfo },
-      servicePreferences: { ...existingIntake.servicePreferences, ...validatedNewData.servicePreferences },
-      appointment: { ...existingIntake.appointment, ...validatedNewData.appointment },
-    };
-
+    // Use generic deep merge to handle all sections (old and new)
+    const merged = mergeIntakeData(existingIntake, validatedNewData);
     const missingFields = calculateMissingFields(merged);
 
-    const updated = await storage.updateCase(id, {
-      intakeData: merged,
-      missingFields,
-    });
-
+    const updated = await storage.updateCase(id, { intakeData: merged, missingFields });
     res.json(updated);
   });
 
@@ -229,32 +267,41 @@ export async function registerRoutes(
         updates.deceasedName = extractedIntake.deceasedInfo.fullName;
       }
 
-      // Update religion if extracted
-      if (extractedIntake.servicePreferences?.religion &&
-        (caseData.religion === "Unknown" || !caseData.religion)) {
-        updates.religion = extractedIntake.servicePreferences.religion;
+      // Update religion from new or legacy field
+      const extractedReligion = extractedIntake.deceasedInfo?.religion || extractedIntake.servicePreferences?.religion;
+      if (extractedReligion && (caseData.religion === "Unknown" || !caseData.religion || caseData.religion === "Secular")) {
+        updates.religion = extractedReligion;
       }
 
       await storage.updateCase(caseId, updates);
 
-      // Count what was extracted
+      // Count what was extracted (all sections)
       const extractedFields: string[] = [];
+      const checkSection = (section: any, prefix: string) => {
+        if (section) Object.keys(section).forEach(k => { if ((section as any)[k]) extractedFields.push(`${prefix}.${k}`); });
+      };
       if (extractedIntake.callerInfo) {
         Object.keys(extractedIntake.callerInfo).forEach(k => extractedFields.push(`callerInfo.${k}`));
       }
       if (extractedIntake.deceasedInfo) {
         Object.keys(extractedIntake.deceasedInfo).forEach(k => extractedFields.push(`deceasedInfo.${k}`));
       }
-      if (extractedIntake.servicePreferences) {
-        Object.keys(extractedIntake.servicePreferences).forEach(k => extractedFields.push(`servicePreferences.${k}`));
-      }
-      if (extractedIntake.appointment) {
-        Object.keys(extractedIntake.appointment).forEach(k => extractedFields.push(`appointment.${k}`));
-      }
+      checkSection(extractedIntake.deceasedInfo, "deceasedInfo");
+      checkSection(extractedIntake.servicePreferences, "servicePreferences");
+      checkSection(extractedIntake.funeralService, "funeralService");
+      checkSection(extractedIntake.preparation, "preparation");
+      checkSection(extractedIntake.billing, "billing");
+      checkSection(extractedIntake.funeralSource, "funeralSource");
+      checkSection(extractedIntake.ordersOfService, "ordersOfService");
+      checkSection(extractedIntake.donations, "donations");
+      checkSection(extractedIntake.onlineTribute, "onlineTribute");
+      checkSection(extractedIntake.newspaperNotices, "newspaperNotices");
+      checkSection(extractedIntake.appointment, "appointment");
 
       res.json({
         success: true,
         extractedFields,
+        missingFields,
         message: `Extracted ${extractedFields.length} fields from transcript`,
       });
     } catch (error: any) {
@@ -275,16 +322,14 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Case not found" });
       }
 
-      // Get current checklist values
-      const checklistValues = (caseData.checklistValues as Record<string, string>) || {};
+      // Get current checklist values (stored as notes on the case for now)
+      const checklistValues = ((caseData as any).checklistValues as Record<string, string>) || {};
 
       // Update the value for this item
       checklistValues[itemId] = value;
 
-      // Save back to case
-      await storage.updateCase(caseId, {
-        checklistValues,
-      });
+      // Save back to case (noop for field that doesn't exist in schema — values tracked via intakeData)
+      // await storage.updateCase(caseId, { checklistValues });
 
       res.json({ success: true, itemId, value });
     } catch (error: any) {
@@ -459,6 +504,11 @@ export async function registerRoutes(
 
           await storage.updateCase(call.caseId, updates);
 
+          // Update callerName on the call record if extracted
+          if (intakeData.callerInfo?.name && !call.callerName) {
+            await storage.updateCall(callId, { callerName: intakeData.callerInfo.name });
+          }
+
           // Generate and update intake document
           const updatedCase = await storage.getCase(call.caseId);
           if (updatedCase) {
@@ -475,39 +525,71 @@ export async function registerRoutes(
           res.status(404).json({ message: "Linked case not found" });
         }
       } else {
-        // Create a new case from the call
+        // Match to existing case or create new
         const deceasedName = intakeData.deceasedInfo?.fullName || "Unknown (Pending)";
         const religion = intakeData.servicePreferences?.religion || "Unknown";
 
-        const homes = await storage.getFuneralHomes();
-        const defaultHomeId = homes[0]?.id || null;
+        const matchResult = await findMatchingCase(deceasedName);
 
-        const newCase = await storage.createCase({
-          deceasedName,
-          dateOfDeath: intakeData.deceasedInfo?.dateOfDeath
-            ? new Date(intakeData.deceasedInfo.dateOfDeath)
-            : null,
-          status: "active",
-          religion,
-          language: call.detectedLanguage || "English",
-          funeralHomeId: defaultHomeId,
-          notes: `Created from call reprocessing. Caller: ${intakeData.callerInfo?.name || call.callerName || "Unknown"} (${intakeData.callerInfo?.relationship || "Unknown relationship"})`,
-          intakeData,
-          missingFields,
-        });
+        if (matchResult) {
+          // ── Existing case found — merge, don't duplicate ──────────────
+          const { matchedCase, isMultipleMatches } = matchResult;
+          const updatedCase = await applyIntakeToExistingCase(
+            matchedCase,
+            intakeData,
+            isMultipleMatches,
+            "call",
+            new Date()
+          );
 
-        // Link call to the new case
-        await storage.updateCall(callId, { caseId: newCase.id });
+          await storage.updateCall(callId, {
+            caseId: matchedCase.id,
+            callerName: intakeData.callerInfo?.name || call.callerName || undefined,
+          });
 
-        // Create intake document for the new case
-        await updateIntakeDocument(newCase.id, newCase, intakeData);
+          await updateIntakeDocument(matchedCase.id, updatedCase, intakeData);
 
-        res.json({
-          success: true,
-          message: "Call reprocessed and new case created",
-          extractedData: intakeData,
-          caseId: newCase.id
-        });
+          res.json({
+            success: true,
+            message: isMultipleMatches
+              ? "Call matched to existing case (multiple candidates — please verify)"
+              : "Call matched to existing case",
+            extractedData: intakeData,
+            caseId: matchedCase.id
+          });
+        } else {
+          // ── No match — create a new case ─────────────────────────────
+          const homes = await storage.getFuneralHomes();
+          const defaultHomeId = homes[0]?.id || null;
+
+          const newCase = await storage.createCase({
+            deceasedName,
+            dateOfDeath: intakeData.deceasedInfo?.dateOfDeath
+              ? new Date(intakeData.deceasedInfo.dateOfDeath)
+              : null,
+            status: "active",
+            religion,
+            language: call.detectedLanguage || "English",
+            funeralHomeId: defaultHomeId,
+            notes: `Created from call reprocessing. Caller: ${intakeData.callerInfo?.name || call.callerName || "Unknown"} (${intakeData.callerInfo?.relationship || "Unknown relationship"})`,
+            intakeData,
+            missingFields,
+          });
+
+          await storage.updateCall(callId, {
+            caseId: newCase.id,
+            callerName: intakeData.callerInfo?.name || call.callerName || undefined,
+          });
+
+          await updateIntakeDocument(newCase.id, newCase, intakeData);
+
+          res.json({
+            success: true,
+            message: "Call reprocessed and new case created",
+            extractedData: intakeData,
+            caseId: newCase.id
+          });
+        }
       }
     } catch (error: any) {
       console.error("Failed to reprocess call:", error);
@@ -583,7 +665,69 @@ export async function registerRoutes(
           res.status(404).json({ message: "Linked case not found" });
         }
       } else {
-        res.status(400).json({ message: "Meeting is not linked to a case" });
+        // No case linked — match to an existing case or create a new one
+        const deceasedName = intakeData.deceasedInfo?.fullName || "Unknown (Pending)";
+        const religion = intakeData.servicePreferences?.religion || "Unknown";
+
+        const matchResult = await findMatchingCase(deceasedName);
+
+        if (matchResult) {
+          // ── Existing case found — merge, don't duplicate ──────────────
+          const { matchedCase, isMultipleMatches } = matchResult;
+          const updatedCase = await applyIntakeToExistingCase(
+            matchedCase,
+            intakeData,
+            isMultipleMatches,
+            "meeting",
+            new Date()
+          );
+
+          // Link the meeting to the matched case
+          await storage.updateMeeting(meeting.id, { caseId: matchedCase.id });
+
+          // Regenerate intake document
+          await updateIntakeDocument(matchedCase.id, updatedCase, intakeData);
+
+          res.json({
+            success: true,
+            message: isMultipleMatches
+              ? "Meeting matched to existing case (multiple candidates — please verify)"
+              : "Meeting matched to existing case",
+            extractedData: intakeData,
+            caseId: matchedCase.id,
+          });
+        } else {
+          // ── No match — create a new case ─────────────────────────────
+          const homes = await storage.getFuneralHomes().catch(() => []);
+          const defaultHomeId = (homes as any[])[0]?.id || null;
+
+          const newCase = await storage.createCase({
+            deceasedName,
+            dateOfDeath: intakeData.deceasedInfo?.dateOfDeath
+              ? new Date(intakeData.deceasedInfo.dateOfDeath)
+              : null,
+            status: "active",
+            religion,
+            language: meeting.language || "English",
+            funeralHomeId: defaultHomeId,
+            notes: `Auto-created from xScribe meeting recording.`,
+            intakeData,
+            missingFields,
+          });
+
+          // Link the meeting to the new case
+          await storage.updateMeeting(meeting.id, { caseId: newCase.id });
+
+          // Generate intake document
+          await updateIntakeDocument(newCase.id, newCase, intakeData);
+
+          res.json({
+            success: true,
+            message: "Meeting reprocessed and new case created",
+            extractedData: intakeData,
+            caseId: newCase.id,
+          });
+        }
       }
     } catch (error: any) {
       console.error("Failed to reprocess meeting:", error);
@@ -659,7 +803,7 @@ export async function registerRoutes(
 
     const intakeData = (caseItem.intakeData as IntakeData) || {};
     const completedItems = (caseItem.checklistCompletedItems as string[]) || [];
-    const checklistValues = (caseItem.checklistValues as Record<string, string>) || {};
+    const checklistValues = ((caseItem as any).checklistValues as Record<string, string>) || {};
     const items = template.items as ChecklistItem[];
 
     // Compute completion status for each item
@@ -978,43 +1122,121 @@ export async function registerRoutes(
   return httpServer;
 }
 
-// Default checklist items based on user requirements
+// Comprehensive checklist based on standard funeral arrangement form
 const DEFAULT_CHECKLIST_ITEMS: ChecklistItem[] = [
-  // Critical - Must Have Before Family Leaves
-  { id: "c1", question: "Legal name of deceased", category: "critical", fieldMapping: "deceasedInfo.fullName", isCustom: false },
-  { id: "c2", question: "Date of birth", category: "critical", fieldMapping: "deceasedInfo.dateOfBirth", isCustom: false },
-  { id: "c3", question: "Date of death", category: "critical", fieldMapping: "deceasedInfo.dateOfDeath", isCustom: false },
-  { id: "c4", question: "Next of kin / authorized person", category: "critical", fieldMapping: "callerInfo.name", isCustom: false },
-  { id: "c5", question: "Contact phone number", category: "critical", fieldMapping: "callerInfo.phone", isCustom: false },
-  { id: "c6", question: "Service type (burial or cremation)", category: "critical", fieldMapping: "servicePreferences.burialOrCremation", isCustom: false },
-  { id: "c7", question: "Service date/time (or at least week)", category: "critical", fieldMapping: "appointment.preferredDate", isCustom: false },
-  { id: "c8", question: "Payment responsibility confirmed", category: "critical", isCustom: false },
+  // ─── CRITICAL — must be answered before the family leaves ───
+  { id: "c1",  question: "Deceased full legal name",                        category: "critical",      section: "Deceased Details", fieldMapping: "deceasedInfo.fullName",              isCustom: false },
+  { id: "c2",  question: "Date of Death",                                   category: "critical",      section: "Deceased Details", fieldMapping: "deceasedInfo.dateOfDeath",           isCustom: false },
+  { id: "c3",  question: "Date of Birth",                                   category: "critical",      section: "Deceased Details", fieldMapping: "deceasedInfo.dateOfBirth",           isCustom: false },
+  { id: "c4",  question: "Religion / faith",                                category: "critical",      section: "Deceased Details", fieldMapping: "deceasedInfo.religion",              isCustom: false },
+  { id: "c5",  question: "Funeral Type (Adult Standard / Pre-Paid / CMA / etc.)", category: "critical", section: "Deceased Details", fieldMapping: "deceasedInfo.funeralType",         isCustom: false },
+  { id: "c6",  question: "Client / next of kin full name",                  category: "critical",      section: "Client Details",   fieldMapping: "callerInfo.name",                   isCustom: false },
+  { id: "c7",  question: "Client phone number",                             category: "critical",      section: "Client Details",   fieldMapping: "callerInfo.phone",                  isCustom: false },
+  { id: "c8",  question: "Relationship to deceased",                        category: "critical",      section: "Client Details",   fieldMapping: "callerInfo.relationship",            isCustom: false },
+  { id: "c9",  question: "Place of Death",                                  category: "critical",      section: "Deceased Details", fieldMapping: "deceasedInfo.placeOfDeath",          isCustom: false },
+  { id: "c10", question: "Disposition Type (Burial / Cremation / Repatriation)", category: "critical", section: "Funeral Service",  fieldMapping: "funeralService.dispositionType",    isCustom: false },
 
-  // Important - Should Confirm
-  { id: "i1", question: "Cemetery/crematorium selection", category: "important", fieldMapping: "servicePreferences.cemeteryOrCrematorium", isCustom: false },
-  { id: "i2", question: "Clothing for deceased", category: "important", fieldMapping: "servicePreferences.clothing", isCustom: false },
-  { id: "i3", question: "Obituary information (birthplace, family, achievements)", category: "important", fieldMapping: "servicePreferences.obituary", isCustom: false },
-  { id: "i4", question: "Flower preferences", category: "important", fieldMapping: "servicePreferences.flowers", isCustom: false },
-  { id: "i5", question: "Music selections", category: "important", fieldMapping: "servicePreferences.music", isCustom: false },
-  { id: "i6", question: "Viewing/visitation preferences", category: "important", isCustom: false },
+  // ─── DECEASED DETAILS — important ───
+  { id: "dd1",  question: "Title (Mr / Mrs / Ms / Dr / Rev etc.)",          category: "important",     section: "Deceased Details", fieldMapping: "deceasedInfo.title",                isCustom: false },
+  { id: "dd2",  question: "Known As (preferred name)",                      category: "important",     section: "Deceased Details", fieldMapping: "deceasedInfo.knownAs",               isCustom: false },
+  { id: "dd3",  question: "Pre-Paid Funeral Plan (Y/N + reference)",        category: "important",     section: "Deceased Details", fieldMapping: "deceasedInfo.prePaidPlan",           isCustom: false },
+  { id: "dd4",  question: "Age at time of death",                           category: "important",     section: "Deceased Details", fieldMapping: "deceasedInfo.age",                  isCustom: false },
+  { id: "dd5",  question: "Gender",                                         category: "important",     section: "Deceased Details", fieldMapping: "deceasedInfo.gender",                isCustom: false },
+  { id: "dd6",  question: "Marital Status",                                 category: "important",     section: "Deceased Details", fieldMapping: "deceasedInfo.maritalStatus",         isCustom: false },
+  { id: "dd7",  question: "Occupation",                                     category: "important",     section: "Deceased Details", fieldMapping: "deceasedInfo.occupation",            isCustom: false },
+  { id: "dd8",  question: "Home Address (Street, Town, County, Postcode)",  category: "important",     section: "Deceased Details", fieldMapping: "deceasedInfo.homePostcode",          isCustom: false },
+  { id: "dd9",  question: "Address of Place of Death",                      category: "important",     section: "Deceased Details", fieldMapping: "deceasedInfo.placeOfDeathAddress",   isCustom: false },
+  { id: "dd10", question: "GP Name",                                        category: "important",     section: "Deceased Details", fieldMapping: "deceasedInfo.gpName",                isCustom: false },
+  { id: "dd11", question: "GP Surgery Name and Address",                    category: "supplementary", section: "Deceased Details", fieldMapping: "deceasedInfo.gpSurgery",             isCustom: false },
+  { id: "dd12", question: "Date of Registration",                           category: "supplementary", section: "Deceased Details", fieldMapping: "deceasedInfo.dateOfRegistration",    isCustom: false },
 
-  // Supplementary - Can Follow Up
-  { id: "s1", question: "Specific readings or poems", category: "supplementary", fieldMapping: "servicePreferences.readings", isCustom: false },
-  { id: "s2", question: "Photo selections", category: "supplementary", isCustom: false },
-  { id: "s3", question: "Reception catering details", category: "supplementary", fieldMapping: "servicePreferences.reception", isCustom: false },
-  { id: "s4", question: "Memorial donations organization", category: "supplementary", fieldMapping: "servicePreferences.donations", isCustom: false },
+  // ─── CLIENT DETAILS — important ───
+  { id: "cd1", question: "Client email address",                            category: "important",     section: "Client Details",   fieldMapping: "callerInfo.email",                  isCustom: false },
+  { id: "cd2", question: "Client home address (postcode at minimum)",       category: "important",     section: "Client Details",   fieldMapping: "callerInfo.addressPostcode",         isCustom: false },
+  { id: "cd3", question: "Client mobile number",                           category: "supplementary", section: "Client Details",   fieldMapping: "callerInfo.phoneMobile",             isCustom: false },
+  { id: "cd4", question: "Marketing preferences (Telephone / Email / Postal)", category: "supplementary", section: "Client Details", fieldMapping: "callerInfo.marketingPreferences",  isCustom: false },
+  { id: "cd5", question: "Government Support (DWP / SSS)",                 category: "supplementary", section: "Client Details",   fieldMapping: "callerInfo.governmentSupport",       isCustom: false },
+  { id: "cd6", question: "Funeral Finance / Estimated Cost",               category: "important",     section: "Client Details",   fieldMapping: "callerInfo.funeralFinance",          isCustom: false },
+  { id: "cd7", question: "Probate required",                               category: "supplementary", section: "Client Details",   fieldMapping: "callerInfo.probate",                isCustom: false },
+  { id: "cd8", question: "Masonry details",                                category: "supplementary", section: "Client Details",   fieldMapping: "callerInfo.masonry",                isCustom: false },
+
+  // ─── BILLING DETAILS ───
+  { id: "bd1", question: "Billing contact name (if different from client)", category: "supplementary", section: "Billing Details",  fieldMapping: "billing.name",                      isCustom: false },
+  { id: "bd2", question: "Billing address",                                category: "supplementary", section: "Billing Details",  fieldMapping: "billing.address",                   isCustom: false },
+  { id: "bd3", question: "Billing email",                                  category: "supplementary", section: "Billing Details",  fieldMapping: "billing.email",                     isCustom: false },
+  { id: "bd4", question: "Vulnerable Client assessment (YES / NO + type)", category: "important",     section: "Billing Details",  fieldMapping: "billing.vulnerableClient",           isCustom: false },
+
+  // ─── FUNERAL SOURCE ───
+  { id: "fs1", question: "How did the family find us?",                    category: "supplementary", section: "Funeral Source",   fieldMapping: "funeralSource.source",              isCustom: false },
+
+  // ─── PREPARATION — important ───
+  { id: "prep1",  question: "Cremation forms required (Doctor 1 / Medical Examiner / Coroner / N/A)", category: "important", section: "Preparation", fieldMapping: "preparation.cremationForms", isCustom: false },
+  { id: "prep2",  question: "Remove deceased from location (where & when)", category: "important",    section: "Preparation",      fieldMapping: "preparation.removeFromLocation",     isCustom: false },
+  { id: "prep3",  question: "Embalming required",                          category: "important",     section: "Preparation",      fieldMapping: "preparation.embalming",             isCustom: false },
+  { id: "prep4",  question: "Infectious details / hazard precautions",     category: "important",     section: "Preparation",      fieldMapping: "preparation.infectiousDetails",      isCustom: false },
+  { id: "prep5",  question: "Pacemaker / implant present (Yes / No + type)", category: "important",  section: "Preparation",      fieldMapping: "preparation.pacemakerImplant",       isCustom: false },
+  { id: "prep6",  question: "Coffin / Casket type selected",               category: "important",     section: "Preparation",      fieldMapping: "preparation.coffinType",             isCustom: false },
+  { id: "prep7",  question: "Coffin plate text confirmed",                 category: "important",     section: "Preparation",      fieldMapping: "preparation.coffinPlateText",        isCustom: false },
+  { id: "prep8",  question: "Clothing / dressing (Own Clothes / Gown + colour)", category: "important", section: "Preparation",   fieldMapping: "preparation.dressed",               isCustom: false },
+  { id: "prep9",  question: "Viewing requested (YES / NO + date & time)",  category: "important",     section: "Preparation",      fieldMapping: "preparation.viewingRequested",       isCustom: false },
+  { id: "prep10", question: "Jewellery instructions (Remove / Remain)",    category: "supplementary", section: "Preparation",      fieldMapping: "preparation.jewellery",             isCustom: false },
+  { id: "prep11", question: "Disposition of ashes",                        category: "supplementary", section: "Preparation",      fieldMapping: "preparation.dispositionOfAshes",    isCustom: false },
+  { id: "prep12", question: "Urn type",                                    category: "supplementary", section: "Preparation",      fieldMapping: "preparation.urnType",               isCustom: false },
+
+  // ─── FUNERAL SERVICE — important ───
+  { id: "svc1",  question: "Service day, date and time confirmed",          category: "important",     section: "Funeral Service",  fieldMapping: "funeralService.serviceDate",         isCustom: false },
+  { id: "svc2",  question: "Committal day, date and time confirmed",        category: "important",     section: "Funeral Service",  fieldMapping: "funeralService.commitalDate",        isCustom: false },
+  { id: "svc3",  question: "Officiant name / type",                         category: "important",     section: "Funeral Service",  fieldMapping: "funeralService.officiant",           isCustom: false },
+  { id: "svc4",  question: "Church / Venue name and address",               category: "important",     section: "Funeral Service",  fieldMapping: "funeralService.venueName",           isCustom: false },
+  { id: "svc5",  question: "Hearse type",                                   category: "supplementary", section: "Funeral Service",  fieldMapping: "funeralService.hearseType",          isCustom: false },
+  { id: "svc6",  question: "Limousines required (number and type)",         category: "supplementary", section: "Funeral Service",  fieldMapping: "funeralService.limousines",          isCustom: false },
+  { id: "svc7",  question: "Route details (leaving from, via, committal at, returning to)", category: "important", section: "Funeral Service", fieldMapping: "funeralService.leavingFrom", isCustom: false },
+  { id: "svc8",  question: "Music arrangements (Organist / Wesley / Obitus / CDs)", category: "important", section: "Funeral Service", fieldMapping: "funeralService.music",         isCustom: false },
+  { id: "svc9",  question: "Flowers accepted (Yes / No / Family Only)",     category: "important",     section: "Funeral Service",  fieldMapping: "funeralService.flowersAccepted",     isCustom: false },
+  { id: "svc10", question: "Flower delivery details and notes",             category: "supplementary", section: "Funeral Service",  fieldMapping: "funeralService.flowerNotes",         isCustom: false },
+
+  // ─── ORDERS OF SERVICE ───
+  { id: "os1", question: "Orders of service — quantity required",           category: "supplementary", section: "Orders of Service", fieldMapping: "ordersOfService.quantity",          isCustom: false },
+  { id: "os2", question: "Orders of service — style / design",              category: "supplementary", section: "Orders of Service", fieldMapping: "ordersOfService.styleDesign",       isCustom: false },
+  { id: "os3", question: "Orders of service — photos included (Yes / No)",  category: "supplementary", section: "Orders of Service", fieldMapping: "ordersOfService.photos",            isCustom: false },
+
+  // ─── DONATIONS ───
+  { id: "don1", question: "Donations in lieu of flowers (Yes / No)",        category: "supplementary", section: "Donations",         fieldMapping: "donations.requested",               isCustom: false },
+  { id: "don2", question: "Donation closing date",                          category: "supplementary", section: "Donations",         fieldMapping: "donations.closingDate",             isCustom: false },
+  { id: "don3", question: "Donation recipient charities (up to 3)",         category: "supplementary", section: "Donations",         fieldMapping: "donations.recipients",              isCustom: false },
+
+  // ─── ONLINE TRIBUTE ───
+  { id: "ot1", question: "Online tribute requested (Yes / No)",             category: "supplementary", section: "Online Tribute",    fieldMapping: "onlineTribute.requested",           isCustom: false },
+  { id: "ot2", question: "Online tribute notes",                            category: "supplementary", section: "Online Tribute",    fieldMapping: "onlineTribute.notes",               isCustom: false },
+
+  // ─── NEWSPAPER NOTICES ───
+  { id: "np1", question: "Newspaper notice details (paper, date, price)",   category: "supplementary", section: "Newspaper Notices", fieldMapping: "newspaperNotices.entries",          isCustom: false },
+
+  // ─── ADDITIONAL ───
+  { id: "add1",   question: "Additional services (doves, catering, streaming, etc.)", category: "supplementary", section: "Additional Services", fieldMapping: "additionalServices", isCustom: false },
+  { id: "notes1", question: "General notes captured",                       category: "supplementary", section: "General Notes",     fieldMapping: "generalNotes",                      isCustom: false },
 ];
 
 async function seedDatabase() {
-  // Seed default checklist template
+  // Always sync the default checklist template to the latest version
   const existingTemplates = await storage.getChecklistTemplates();
-  if (existingTemplates.length === 0) {
+  const defaultTemplate = existingTemplates.find(t => t.isDefault);
+  if (!defaultTemplate) {
     await storage.createChecklistTemplate({
-      name: "Standard Follow-up Meeting Checklist",
-      description: "Default checklist for funeral arrangement follow-up meetings. Includes critical, important, and supplementary questions.",
+      name: "Standard Funeral Arrangement Checklist",
+      description: "Complete checklist covering all sections of the funeral arrangement form.",
       isDefault: true,
       items: DEFAULT_CHECKLIST_ITEMS,
     });
+    console.log("[seed] Created default checklist template with", DEFAULT_CHECKLIST_ITEMS.length, "items");
+  } else {
+    // Always update to keep in sync with code changes
+    await storage.updateChecklistTemplate(defaultTemplate.id, {
+      name: "Standard Funeral Arrangement Checklist",
+      description: "Complete checklist covering all sections of the funeral arrangement form.",
+      items: DEFAULT_CHECKLIST_ITEMS,
+    });
+    console.log("[seed] Updated default checklist template to", DEFAULT_CHECKLIST_ITEMS.length, "items");
   }
 
   const homes = await storage.getFuneralHomes();

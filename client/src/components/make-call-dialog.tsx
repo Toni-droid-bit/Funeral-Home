@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useVapiPhoneNumbers, useVapiAssistants, useMakeCall } from "@/hooks/use-vapi";
-import { useCases } from "@/hooks/use-cases";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,7 +38,6 @@ const formSchema = z.object({
   customerNumber: z.string().min(1, "Please enter a phone number to call").regex(/^\+?[\d\s-()]+$/, "Invalid phone number format"),
   customerName: z.string().optional(),
   assistantId: z.string().optional(),
-  caseId: z.string().optional(),
   firstMessage: z.string().optional(),
 });
 
@@ -53,7 +51,6 @@ export function MakeCallDialog({ trigger }: MakeCallDialogProps) {
   const [open, setOpen] = useState(false);
   const { data: phoneNumbers, isLoading: loadingPhones } = useVapiPhoneNumbers();
   const { data: assistants, isLoading: loadingAssistants } = useVapiAssistants();
-  const { data: cases } = useCases();
   const { mutateAsync: makeCall, isPending } = useMakeCall();
   const { toast } = useToast();
 
@@ -64,7 +61,6 @@ export function MakeCallDialog({ trigger }: MakeCallDialogProps) {
       customerNumber: "",
       customerName: "",
       assistantId: "",
-      caseId: "",
       firstMessage: "",
     },
   });
@@ -75,8 +71,7 @@ export function MakeCallDialog({ trigger }: MakeCallDialogProps) {
         phoneNumberId: data.phoneNumberId,
         customerNumber: data.customerNumber,
         customerName: data.customerName || undefined,
-        assistantId: data.assistantId || undefined,
-        caseId: data.caseId ? parseInt(data.caseId) : undefined,
+        assistantId: (data.assistantId && data.assistantId !== "default") ? data.assistantId : undefined,
         firstMessage: data.firstMessage || undefined,
       });
       toast({
@@ -110,7 +105,7 @@ export function MakeCallDialog({ trigger }: MakeCallDialogProps) {
         <DialogHeader>
           <DialogTitle className="font-display text-2xl">Make AI Call</DialogTitle>
           <DialogDescription>
-            Initiate an AI-powered outbound call using Vapi.
+            Initiate an AI-powered outbound call. A case will be created automatically from the call transcript when the call ends.
           </DialogDescription>
         </DialogHeader>
 
@@ -200,36 +195,10 @@ export function MakeCallDialog({ trigger }: MakeCallDialogProps) {
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="">Default Funeral Assistant</SelectItem>
+                        <SelectItem value="default">Default Funeral Assistant</SelectItem>
                         {assistants?.map((assistant) => (
                           <SelectItem key={assistant.id} value={assistant.id}>
                             {assistant.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="caseId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Link to Case (Optional)</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger data-testid="select-case">
-                          <SelectValue placeholder="Select a case" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="">No case linked</SelectItem>
-                        {cases?.map((c) => (
-                          <SelectItem key={c.id} value={c.id.toString()}>
-                            {c.deceasedName} - {c.status}
                           </SelectItem>
                         ))}
                       </SelectContent>
