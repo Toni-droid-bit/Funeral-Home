@@ -467,6 +467,7 @@ export async function registerRoutes(
     if (transcript !== undefined && call.caseId) {
       try {
         const intakeData = await parseCallTranscriptToIntake(transcript, call.summary || undefined);
+        console.log(`[PATCH /api/calls/${callId}] re-parsed transcript, extracted intakeData:`, JSON.stringify(intakeData, null, 2));
         const existingCase = await storage.getCase(call.caseId);
         if (existingCase) {
           const mergedIntake = mergeIntakeData((existingCase.intakeData as IntakeData) || {}, intakeData);

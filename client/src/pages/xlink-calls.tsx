@@ -1,9 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useCalls } from "@/hooks/use-calls";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { PlayCircle, FileText, Phone, PhoneOutgoing, FolderOpen, CheckCircle2, Sparkles, Loader2, PhoneCall } from "lucide-react";
+import { PlayCircle, FileText, Phone, PhoneOutgoing, FolderOpen, CheckCircle2, Sparkles, Loader2, PhoneCall, Save } from "lucide-react";
 import { MakeCallDialog } from "@/components/make-call-dialog";
 import { format } from "date-fns";
 import { StatusBadge } from "@/components/status-badge";
@@ -20,6 +20,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { InlineEditField } from "@/components/inline-edit-field";
+import { Textarea } from "@/components/ui/textarea";
 
 export default function XLinkCalls() {
   const { data: calls, isLoading } = useCalls();
@@ -27,6 +28,7 @@ export default function XLinkCalls() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const autoExtractedRef = useRef<Set<number>>(new Set());
+  const [editedTranscripts, setEditedTranscripts] = useState<Record<number, string>>({});
 
   const getCaseForCall = (caseId: number | null) => {
     if (!caseId || !cases) return null;
@@ -43,6 +45,31 @@ export default function XLinkCalls() {
     },
     onError: (err: any) => {
       toast({ title: "Extraction failed", description: err?.message || "Could not extract data from transcript", variant: "destructive" });
+    },
+  });
+
+  const saveAndReparseMutation = useMutation({
+    mutationFn: async ({ callId, caseId, transcript }: { callId: number; caseId: number | null; transcript: string }) => {
+      // Step 1: PATCH the call with the new transcript (server also re-parses internally)
+      await apiRequest("PATCH", `/api/calls/${callId}`, { transcript });
+      // Step 2: If linked to a case, explicitly trigger process-transcript as well
+      if (caseId) {
+        await apiRequest("POST", `/api/cases/${caseId}/process-transcript`, { transcript });
+      }
+    },
+    onSuccess: (_data, { callId }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/calls"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+      // Clear the edited state for this call after a successful save
+      setEditedTranscripts(prev => {
+        const next = { ...prev };
+        delete next[callId];
+        return next;
+      });
+      toast({ title: "Transcript saved & re-parsed", description: "Extracted Data panel has been updated." });
+    },
+    onError: (err: any) => {
+      toast({ title: "Save failed", description: err?.message || "Could not save and re-parse.", variant: "destructive" });
     },
   });
 
@@ -271,11 +298,39 @@ export default function XLinkCalls() {
                             <DialogHeader>
                               <DialogTitle>Call Transcript</DialogTitle>
                             </DialogHeader>
-                            <ScrollArea className="h-[60vh] pr-4">
-                              <div className="whitespace-pre-wrap text-sm text-muted-foreground">
-                                {call.transcript}
-                              </div>
-                            </ScrollArea>
+                            <Textarea
+                              className="h-[55vh] resize-none text-sm font-mono"
+                              value={editedTranscripts[call.id] ?? call.transcript ?? ""}
+                              onChange={(e) =>
+                                setEditedTranscripts(prev => ({ ...prev, [call.id]: e.target.value }))
+                              }
+                            />
+                            <div className="flex justify-end pt-2">
+                              <Button
+                                size="sm"
+                                className="gap-2"
+                                disabled={
+                                  saveAndReparseMutation.isPending ||
+                                  (editedTranscripts[call.id] === undefined ||
+                                    editedTranscripts[call.id] === call.transcript)
+                                }
+                                onClick={() =>
+                                  saveAndReparseMutation.mutate({
+                                    callId: call.id,
+                                    caseId: call.caseId ?? null,
+                                    transcript: editedTranscripts[call.id] ?? call.transcript ?? "",
+                                  })
+                                }
+                                data-testid={`button-save-reparse-${call.id}`}
+                              >
+                                {saveAndReparseMutation.isPending && saveAndReparseMutation.variables?.callId === call.id ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <Save className="w-4 h-4" />
+                                )}
+                                Save & Re-parse
+                              </Button>
+                            </div>
                           </DialogContent>
                         </Dialog>
                         <Button
