@@ -387,58 +387,68 @@ Return ONLY a valid JSON object with this exact structure. Use null for any fiel
 }
 
 export function generateIntakeDocument(caseData: any, intakeData: IntakeData): string {
-  const now = new Date().toLocaleString();
-  let doc = `INTAKE SUMMARY DOCUMENT\n\nCase: ${caseData.deceasedName || "Unknown"}\nLast Updated: ${now}\n`;
+  const now = new Date().toLocaleString("en-GB", {
+    day: "2-digit", month: "long", year: "numeric",
+    hour: "2-digit", minute: "2-digit"
+  });
+  const has = (v: any): boolean =>
+    v !== null && v !== undefined && v !== "" && v !== "Not provided" && v !== "Unknown";
 
-  const hasValue = (v: any): boolean =>
-    v !== null && v !== undefined && v !== "" && v !== "Not provided";
+  const lines: string[] = [];
+  const div = "─".repeat(56);
 
-  const addSection = (title: string, fields: [string, any][]) => {
-    const valid = fields.filter(([, v]) => hasValue(v));
-    if (valid.length === 0) return;
-    doc += `\n${title}\n${"─".repeat(title.length)}\n`;
-    for (const [label, value] of valid) {
-      doc += `${label}: ${value}\n`;
+  const addSection = (title: string, fields: Array<[string, any]>) => {
+    const validFields = fields.filter(([, v]) => has(v));
+    if (validFields.length === 0) return;
+    lines.push(div);
+    lines.push(`  ${title}`);
+    lines.push(div);
+    for (const [label, value] of validFields) {
+      lines.push(`  ${(label + ":").padEnd(28)} ${value}`);
     }
+    lines.push("");
   };
 
-  const joinAddr = (...parts: (string | undefined | null)[]) => {
-    const joined = parts.filter(Boolean).join(", ");
-    return joined || undefined;
-  };
+  // Header
+  lines.push("╔" + "═".repeat(54) + "╗");
+  lines.push("║" + "  FUNERAL ARRANGEMENT — INTAKE RECORD".padEnd(54) + "║");
+  lines.push("╚" + "═".repeat(54) + "╝");
+  lines.push("");
+  lines.push(`  Prepared:  ${now}`);
+  lines.push(`  Case Ref:  ${caseData.id || "—"}  |  Status: ${(caseData.status || "active").toUpperCase()}`);
+  lines.push("");
 
-  // ── Deceased Information ──────────────────────────────────────────────────
   const d = intakeData.deceasedInfo || {};
-  addSection("DECEASED INFORMATION", [
-    ["Full Legal Name", d.fullName],
-    ["Title", d.title],
-    ["Forenames", d.forenames],
-    ["Surname", d.surname],
+  const homeAddr = [d.homeStreet, d.homeTown, d.homeCounty, d.homePostcode, d.homeCountry].filter(has).join(", ");
+
+  addSection("DECEASED DETAILS", [
+    ["Full Name", d.fullName || caseData.deceasedName],
     ["Known As", d.knownAs],
+    ["Title", d.title],
     ["Gender", d.gender],
     ["Date of Birth", d.dateOfBirth],
     ["Date of Death", d.dateOfDeath],
     ["Age", d.age],
     ["Marital Status", d.maritalStatus],
-    ["Religion", d.religion],
     ["Occupation", d.occupation],
+    ["Religion", d.religion],
     ["Funeral Type", d.funeralType],
-    ["Pre-Paid Plan", d.prePaidPlan],
-    ["Pre-Paid Plan Ref", d.prePaidPlanRef],
-    ["Date of Registration", d.dateOfRegistration],
-    ["Home Address", joinAddr(d.homeStreet, d.homeTown, d.homeCounty, d.homePostcode, d.homeCountry)],
     ["Place of Death", d.placeOfDeath],
     ["Address of Place of Death", d.placeOfDeathAddress],
     ["Current Location", d.currentLocation],
     ["Cause of Death", d.causeOfDeath],
+    ["Home Address", homeAddr || null],
     ["GP Name", d.gpName],
     ["GP Surgery", d.gpSurgery],
+    ["Pre-paid Plan", d.prePaidPlan],
+    ["Pre-paid Reference", d.prePaidPlanRef],
+    ["Date of Registration", d.dateOfRegistration],
   ]);
 
-  // ── Client / Next of Kin ──────────────────────────────────────────────────
   const c = intakeData.callerInfo || {};
-  addSection("CLIENT / NEXT OF KIN", [
-    ["Name", c.name ? [c.title, c.name].filter(Boolean).join(" ") : undefined],
+  const clientAddr = [c.addressStreet, c.addressTown, c.addressCounty, c.addressPostcode, c.addressCountry].filter(has).join(", ");
+  addSection("NEXT OF KIN / CLIENT", [
+    ["Name", c.name ? [c.title, c.name].filter(has).join(" ") : undefined],
     ["Forenames", c.forenames],
     ["Surname", c.surname],
     ["Relationship", c.relationship],
@@ -446,7 +456,7 @@ export function generateIntakeDocument(caseData: any, intakeData: IntakeData): s
     ["Mobile", c.phoneMobile],
     ["Home Phone", c.phoneHome],
     ["Email", c.email],
-    ["Address", joinAddr(c.addressStreet, c.addressTown, c.addressCounty, c.addressPostcode, c.addressCountry)],
+    ["Address", clientAddr || null],
     ["Marketing Preferences", c.marketingPreferences],
     ["Government Support", c.governmentSupport],
     ["Funeral Finance", c.funeralFinance],
@@ -455,26 +465,23 @@ export function generateIntakeDocument(caseData: any, intakeData: IntakeData): s
     ["Masonry", c.masonry],
   ]);
 
-  // ── Billing Details ───────────────────────────────────────────────────────
   const b = intakeData.billing || {};
   addSection("BILLING DETAILS", [
-    ["Billing Contact", b.name ? [b.title, b.name].filter(Boolean).join(" ") : undefined],
+    ["Billing Contact", b.name ? [b.title, b.name].filter(has).join(" ") : undefined],
     ["Address", b.address],
     ["Home Phone", b.phoneHome],
     ["Mobile", b.phoneMobile],
     ["Work Phone", b.phoneWork],
     ["Email", b.email],
-    ["Vulnerable Client Assessment", b.vulnerableClient],
+    ["Vulnerable Client", b.vulnerableClient],
   ]);
 
-  // ── Funeral Source ────────────────────────────────────────────────────────
-  const fs = (intakeData as any).funeralSource || {};
+  const fsrc = (intakeData as any).funeralSource || {};
   addSection("FUNERAL SOURCE", [
-    ["How They Found Us", fs.source],
-    ["Details", fs.details],
+    ["How They Found Us", fsrc.source],
+    ["Details", fsrc.details],
   ]);
 
-  // ── Preparation ───────────────────────────────────────────────────────────
   const p = intakeData.preparation || {};
   addSection("PREPARATION", [
     ["Cremation Forms", p.cremationForms],
@@ -499,12 +506,11 @@ export function generateIntakeDocument(caseData: any, intakeData: IntakeData): s
     ["Disposition of Ashes", p.dispositionOfAshes],
   ]);
 
-  // ── Funeral Service ───────────────────────────────────────────────────────
   const s = intakeData.funeralService || {};
   addSection("FUNERAL SERVICE", [
-    ["Disposition Type", s.dispositionType],
-    ["Service Date / Time", s.serviceDate ? `${s.serviceDate}${s.serviceTime ? " at " + s.serviceTime : ""}` : undefined],
-    ["Committal Date / Time", s.commitalDate ? `${s.commitalDate}${s.commitalTime ? " at " + s.commitalTime : ""}` : undefined],
+    ["Disposition", s.dispositionType],
+    ["Service Date", s.serviceDate ? `${s.serviceDate}${s.serviceTime ? " at " + s.serviceTime : ""}` : undefined],
+    ["Committal Date", s.commitalDate ? `${s.commitalDate}${s.commitalTime ? " at " + s.commitalTime : ""}` : undefined],
     ["Venue", s.venueName],
     ["Venue Denomination", s.venueDenomination],
     ["Venue Address", s.venueAddress],
@@ -521,7 +527,6 @@ export function generateIntakeDocument(caseData: any, intakeData: IntakeData): s
     ["Flower Notes", s.flowerNotes],
   ]);
 
-  // ── Orders of Service ─────────────────────────────────────────────────────
   const o = intakeData.ordersOfService || {};
   addSection("ORDERS OF SERVICE", [
     ["Quantity", o.quantity],
@@ -534,7 +539,6 @@ export function generateIntakeDocument(caseData: any, intakeData: IntakeData): s
     ["Order Received", o.orderReceived],
   ]);
 
-  // ── Donations ─────────────────────────────────────────────────────────────
   const don = intakeData.donations || {};
   addSection("DONATIONS", [
     ["Donations Requested", don.requested],
@@ -542,7 +546,6 @@ export function generateIntakeDocument(caseData: any, intakeData: IntakeData): s
     ["Recipients", don.recipients],
   ]);
 
-  // ── Online Tribute ────────────────────────────────────────────────────────
   const ot = intakeData.onlineTribute || {};
   addSection("ONLINE TRIBUTE", [
     ["Requested", ot.requested],
@@ -550,20 +553,46 @@ export function generateIntakeDocument(caseData: any, intakeData: IntakeData): s
     ["Notes", ot.notes],
   ]);
 
-  // ── Newspaper Notices ─────────────────────────────────────────────────────
   const nn = intakeData.newspaperNotices || {};
   addSection("NEWSPAPER NOTICES", [
     ["Notices", nn.entries],
   ]);
 
-  // ── Additional Services / General Notes ───────────────────────────────────
-  if (hasValue(intakeData.additionalServices)) {
-    doc += `\nADDITIONAL SERVICES\n${"─".repeat(19)}\n${intakeData.additionalServices}\n`;
-  }
-  if (hasValue(intakeData.generalNotes)) {
-    doc += `\nGENERAL NOTES\n${"─".repeat(13)}\n${intakeData.generalNotes}\n`;
+  const sp = intakeData.servicePreferences || {};
+  addSection("SERVICE PREFERENCES", [
+    ["Burial / Cremation", sp.burialOrCremation],
+    ["Religion", sp.religion],
+    ["Service Type", sp.serviceType],
+    ["Cemetery / Crematorium", sp.cemeteryOrCrematorium],
+    ["Clothing", sp.clothing],
+    ["Flowers", sp.flowers],
+    ["Music", sp.music],
+    ["Readings", sp.readings],
+    ["Obituary", sp.obituary],
+    ["Donations", sp.donations],
+    ["Reception", sp.reception],
+  ]);
+
+  if (has(intakeData.additionalServices)) {
+    lines.push(div);
+    lines.push("  ADDITIONAL SERVICES");
+    lines.push(div);
+    lines.push(`  ${intakeData.additionalServices}`);
+    lines.push("");
   }
 
-  doc += `\n\nThis document is automatically updated with each call, meeting, and data entry.\n`;
-  return doc;
+  const notes = [intakeData.generalNotes, caseData.notes].filter(has);
+  if (notes.length > 0) {
+    lines.push(div);
+    lines.push("  NOTES");
+    lines.push(div);
+    for (const n of notes) lines.push(`  ${n}`);
+    lines.push("");
+  }
+
+  lines.push(div);
+  lines.push(`  Document generated by xFunerals · ${now}`);
+  lines.push(div);
+
+  return lines.join("\n");
 }

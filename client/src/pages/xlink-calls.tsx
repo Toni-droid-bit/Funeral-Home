@@ -228,57 +228,41 @@ export default function XLinkCalls() {
 
                     {/* Editable intake fields for linked case */}
                     {call.caseId && linkedCase && (
-                      <div className="mt-3 p-3 rounded-lg bg-muted/20 border border-border/40">
-                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Extracted Information</p>
-                        <div className="grid grid-cols-2 gap-x-6 gap-y-2">
-                          <InlineEditField
-                            label="Deceased Name"
-                            value={intake.deceasedInfo?.fullName || linkedCase.deceasedName}
-                            onSave={makeIntakeSaver(linkedCase.id, "deceasedInfo", "fullName")}
-                            placeholder="Not recorded"
-                          />
-                          <InlineEditField
-                            label="Date of Death"
-                            value={intake.deceasedInfo?.dateOfDeath}
-                            onSave={makeIntakeSaver(linkedCase.id, "deceasedInfo", "dateOfDeath")}
-                            placeholder="Not recorded"
-                          />
-                          <InlineEditField
-                            label="Caller Name"
-                            value={intake.callerInfo?.name}
-                            onSave={makeIntakeSaver(linkedCase.id, "callerInfo", "name")}
-                            placeholder="Unknown Caller"
-                          />
-                          <InlineEditField
-                            label="Phone Number"
-                            value={intake.callerInfo?.phone}
-                            onSave={makeIntakeSaver(linkedCase.id, "callerInfo", "phone")}
-                            placeholder="Not recorded"
-                          />
-                          <InlineEditField
-                            label="Location"
-                            value={intake.deceasedInfo?.currentLocation}
-                            onSave={makeIntakeSaver(linkedCase.id, "deceasedInfo", "currentLocation")}
-                            placeholder="Not recorded"
-                          />
-                          <InlineEditField
-                            label="Religion"
-                            value={intake.servicePreferences?.religion}
-                            onSave={makeIntakeSaver(linkedCase.id, "servicePreferences", "religion")}
-                            placeholder="Not specified"
-                          />
-                          <InlineEditField
-                            label="Burial / Cremation"
-                            value={intake.servicePreferences?.burialOrCremation}
-                            onSave={makeIntakeSaver(linkedCase.id, "servicePreferences", "burialOrCremation")}
-                            placeholder="Not decided"
-                          />
-                          <InlineEditField
-                            label="Relationship"
-                            value={intake.callerInfo?.relationship}
-                            onSave={makeIntakeSaver(linkedCase.id, "callerInfo", "relationship")}
-                            placeholder="Not recorded"
-                          />
+                      <div className="mt-3 relative">
+                        {saveAndReparseMutation.isPending && saveAndReparseMutation.variables?.callId === call.id && (
+                          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm rounded-lg z-10 flex items-center justify-center gap-2">
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="text-sm font-medium text-primary">Re-parsing transcript…</span>
+                          </div>
+                        )}
+                        <div className="rounded-lg border border-border/60 overflow-hidden">
+                          <div className="px-3 py-2 bg-muted/40 border-b border-border/40 flex items-center gap-2">
+                            <Sparkles className="w-3.5 h-3.5 text-purple-500" />
+                            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Extracted Information</p>
+                          </div>
+                          <div className="grid grid-cols-2 gap-px bg-border/20">
+                            {[
+                              { label: "Deceased Name", value: intake.deceasedInfo?.fullName || linkedCase.deceasedName, section: "deceasedInfo", field: "fullName" },
+                              { label: "Date of Death", value: intake.deceasedInfo?.dateOfDeath, section: "deceasedInfo", field: "dateOfDeath" },
+                              { label: "Caller Name", value: intake.callerInfo?.name, section: "callerInfo", field: "name" },
+                              { label: "Phone Number", value: intake.callerInfo?.phone, section: "callerInfo", field: "phone" },
+                              { label: "Location", value: intake.deceasedInfo?.currentLocation, section: "deceasedInfo", field: "currentLocation" },
+                              { label: "Religion", value: intake.servicePreferences?.religion, section: "servicePreferences", field: "religion" },
+                              { label: "Burial / Cremation", value: intake.servicePreferences?.burialOrCremation, section: "servicePreferences", field: "burialOrCremation" },
+                              { label: "Relationship", value: intake.callerInfo?.relationship, section: "callerInfo", field: "relationship" },
+                            ].map(({ label, value, section, field }) => (
+                              <div key={field} className="bg-card px-3 py-2">
+                                <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">{label}</p>
+                                <InlineEditField
+                                  value={value}
+                                  onSave={makeIntakeSaver(linkedCase.id, section, field)}
+                                  placeholder="—"
+                                  displayClassName="text-xs font-medium"
+                                  inputClassName="text-xs h-6 py-0"
+                                />
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       </div>
                     )}

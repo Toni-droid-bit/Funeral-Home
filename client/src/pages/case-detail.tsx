@@ -9,7 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Phone, Mic, FileText, ArrowLeft, Loader2, Calendar, CheckCircle2, ClipboardList, Trash2, Pencil, AlertCircle } from "lucide-react";
+import { Phone, Mic, FileText, ArrowLeft, Loader2, Calendar, CheckCircle2, ClipboardList, Trash2, Pencil, AlertCircle, Sparkles } from "lucide-react";
 import { format } from "date-fns";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -96,7 +96,7 @@ function ChecklistValueInput({
         }
       }}
       placeholder="Enter value..."
-      className="text-xs border border-input rounded px-2 py-0.5 w-40 bg-background focus:outline-none focus:ring-1 focus:ring-primary flex-shrink-0"
+      className="text-xs border border-input rounded px-2 py-0.5 w-24 bg-background focus:outline-none focus:ring-1 focus:ring-primary flex-shrink-0"
     />
   );
 }
@@ -152,6 +152,7 @@ export default function CaseDetail() {
       queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
       // Also refresh checklist so isCompleted ticks reflect latest intakeData
       queryClient.invalidateQueries({ queryKey: ["/api/cases", caseId, "checklist"] });
+      toast({ title: "Saved", description: "Changes saved · Document regenerated." });
     },
     onError: () => {
       toast({ title: "Save failed", description: "Could not save changes.", variant: "destructive" });
@@ -323,7 +324,13 @@ export default function CaseDetail() {
   const missingSections = (() => {
     if (!checklist?.items) return {} as Record<string, ChecklistItemWithStatus[]>;
     return checklist.items
-      .filter(item => !item.isCompleted)
+      .filter(item => {
+        if (item.fieldMapping) {
+          const val = item.fieldMapping.split('.').reduce((obj: any, key) => obj?.[key], intake);
+          return !Boolean(val);
+        }
+        return !item.isCompleted;
+      })
       .reduce((acc, item) => {
         const sec = item.section || "General";
         if (!acc[sec]) acc[sec] = [];
@@ -332,7 +339,14 @@ export default function CaseDetail() {
       }, {} as Record<string, ChecklistItemWithStatus[]>);
   })();
 
-  const missingCriticalCount = checklist?.items?.filter(i => i.category === "critical" && !i.isCompleted).length ?? 0;
+  const missingCriticalCount = checklist?.items?.filter(item => {
+    if (item.category !== "critical") return false;
+    if (item.fieldMapping) {
+      const val = item.fieldMapping.split('.').reduce((obj: any, key) => obj?.[key], intake);
+      return !Boolean(val);
+    }
+    return !item.isCompleted;
+  }).length ?? 0;
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -410,7 +424,11 @@ export default function CaseDetail() {
 
               {/* Intake data fields */}
               <div>
-                <h4 className="text-sm font-semibold text-foreground mb-3">Extracted Intake Data</h4>
+                <div className="flex items-center gap-3 mb-3">
+                  <span className="h-px flex-1 bg-border" />
+                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest whitespace-nowrap">Extracted Intake Data</h4>
+                  <span className="h-px flex-1 bg-border" />
+                </div>
                 <div className="grid grid-cols-2 gap-x-6 gap-y-3">
                   <InlineEditField
                     label="Deceased Full Name"
@@ -448,7 +466,11 @@ export default function CaseDetail() {
               <Separator />
 
               <div>
-                <h4 className="text-sm font-semibold text-foreground mb-3">Caller / Next of Kin</h4>
+                <div className="flex items-center gap-3 mb-3">
+                  <span className="h-px flex-1 bg-border" />
+                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest whitespace-nowrap">Caller / Next of Kin</h4>
+                  <span className="h-px flex-1 bg-border" />
+                </div>
                 <div className="grid grid-cols-2 gap-x-6 gap-y-3">
                   <InlineEditField
                     label="Caller Name"
@@ -480,7 +502,11 @@ export default function CaseDetail() {
               <Separator />
 
               <div>
-                <h4 className="text-sm font-semibold text-foreground mb-3">Service Preferences</h4>
+                <div className="flex items-center gap-3 mb-3">
+                  <span className="h-px flex-1 bg-border" />
+                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest whitespace-nowrap">Service Preferences</h4>
+                  <span className="h-px flex-1 bg-border" />
+                </div>
                 <div className="grid grid-cols-2 gap-x-6 gap-y-3">
                   <InlineEditField
                     label="Burial / Cremation"
@@ -574,7 +600,13 @@ export default function CaseDetail() {
                         const items = groupedChecklist[category] || [];
                         if (items.length === 0) return null;
                         const config = categoryConfig[category];
-                        const completedInCategory = items.filter(i => i.isCompleted).length;
+                        const completedInCategory = items.filter(item => {
+                          if (item.fieldMapping) {
+                            const val = item.fieldMapping.split('.').reduce((obj: any, key) => obj?.[key], intake);
+                            return Boolean(val);
+                          }
+                          return item.isCompleted;
+                        }).length;
 
                         return (
                           <div key={category} className="space-y-2">
@@ -600,32 +632,36 @@ export default function CaseDetail() {
                                 return (
                                   <div
                                     key={item.id}
-                                    className={`flex items-start gap-2 p-2 rounded text-sm w-full transition-colors ${
+                                    className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm w-full transition-colors ${
                                       isCompleted
                                         ? "bg-green-50 dark:bg-green-900/20"
                                         : config.bgColor
                                     }`}
                                     data-testid={`checklist-item-${item.id}`}
                                   >
-                                    {/* Checkbox / status icon */}
                                     <button
                                       onClick={() => canToggle && toggleChecklistMutation.mutate(item.id)}
                                       disabled={toggleChecklistMutation.isPending || !canToggle}
-                                      className={`flex-shrink-0 mt-0.5 ${canToggle ? "cursor-pointer hover:opacity-70" : "cursor-default"}`}
+                                      className={`flex-shrink-0 ${canToggle ? "cursor-pointer hover:opacity-70" : "cursor-default"}`}
                                     >
                                       {isCompleted ? (
                                         <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400" />
                                       ) : (
-                                        <div className={`w-4 h-4 border-2 rounded ${config.iconColor} border-current`} />
+                                        <div className={`w-4 h-4 border-2 rounded-full ${config.iconColor} border-current`} />
                                       )}
                                     </button>
 
-                                    {/* Question label */}
-                                    <span className={`flex-1 min-w-0 ${isCompleted ? "text-green-700 dark:text-green-300" : "text-foreground"}`}>
-                                      {item.question}
-                                    </span>
+                                    <div className="flex-1 min-w-0">
+                                      <span className={`text-xs font-medium leading-tight ${isCompleted ? "text-green-700 dark:text-green-300" : "text-foreground"}`}>
+                                        {item.question}
+                                      </span>
+                                      {currentValue && (
+                                        <span className="block text-[11px] text-muted-foreground leading-tight mt-0.5 truncate">
+                                          {currentValue}
+                                        </span>
+                                      )}
+                                    </div>
 
-                                    {/* Editable value input for field-mapped items */}
                                     {item.fieldMapping ? (
                                       <ChecklistValueInput
                                         currentValue={currentValue}
@@ -633,7 +669,7 @@ export default function CaseDetail() {
                                       />
                                     ) : (
                                       isAutoCompleted && (
-                                        <span className="text-xs text-muted-foreground flex-shrink-0">(auto)</span>
+                                        <span className="text-[10px] text-muted-foreground flex-shrink-0 bg-muted px-1.5 py-0.5 rounded">auto</span>
                                       )
                                     )}
                                   </div>
@@ -705,15 +741,18 @@ export default function CaseDetail() {
                                   <div className="flex gap-2">
                                     <Button
                                       size="sm"
-                                      className="h-7 text-xs"
+                                      className="h-7 text-xs gap-1.5"
                                       disabled={isSaving}
                                       onClick={() => {
                                         setSavingTranscripts(prev => ({ ...prev, [call.id]: true }));
                                         patchCallMutation.mutate({ callId: call.id, transcript: transcriptDraft || "" });
                                       }}
                                     >
-                                      {isSaving ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
-                                      Save & Re-parse
+                                      {isSaving ? (
+                                        <><Loader2 className="w-3 h-3 animate-spin" /> Re-parsing…</>
+                                      ) : (
+                                        <><Sparkles className="w-3 h-3" /> Save & Re-parse</>
+                                      )}
                                     </Button>
                                     <Button
                                       variant="outline"
@@ -878,15 +917,19 @@ export default function CaseDetail() {
                             </div>
                           </div>
                           {doc.content !== undefined && (
-                            <div className="mt-3">
-                              <InlineEditField
-                                value={doc.content}
-                                onSave={(v) => patchDocumentMutation.mutate({ docId: doc.id, content: v })}
-                                placeholder="No content. Click to add..."
-                                multiline={true}
-                                inputClassName="min-h-[12rem] font-mono text-xs"
-                                displayClassName="font-mono text-xs max-h-64 overflow-y-auto"
-                              />
+                            <div className="mt-3 border rounded-lg overflow-hidden">
+                              <div className="flex items-center justify-between px-3 py-2 bg-muted/40 border-b">
+                                <span className="text-xs text-muted-foreground font-medium">Document Preview</span>
+                                <button
+                                  className="text-xs text-primary hover:underline"
+                                  onClick={() => window.print()}
+                                >
+                                  Print
+                                </button>
+                              </div>
+                              <pre className="font-mono text-[11px] leading-relaxed p-4 bg-background max-h-[500px] overflow-y-auto whitespace-pre text-foreground/80">
+                                {doc.content}
+                              </pre>
                             </div>
                           )}
                         </div>
