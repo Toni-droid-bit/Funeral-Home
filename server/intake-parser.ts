@@ -388,53 +388,182 @@ Return ONLY a valid JSON object with this exact structure. Use null for any fiel
 
 export function generateIntakeDocument(caseData: any, intakeData: IntakeData): string {
   const now = new Date().toLocaleString();
-  let doc = `INTAKE SUMMARY DOCUMENT\n\nCase: ${caseData.deceasedName || "Unknown"}\nLast Updated: ${now}\n\n`;
+  let doc = `INTAKE SUMMARY DOCUMENT\n\nCase: ${caseData.deceasedName || "Unknown"}\nLast Updated: ${now}\n`;
 
-  doc += `DECEASED INFORMATION\n`;
-  if (intakeData.deceasedInfo) {
-    const d = intakeData.deceasedInfo;
-    if (d.fullName) doc += `Full Legal Name: ${d.fullName}\n`;
-    if (d.title) doc += `Title: ${d.title}\n`;
-    if (d.knownAs) doc += `Known As: ${d.knownAs}\n`;
-    if (d.gender) doc += `Gender: ${d.gender}\n`;
-    if (d.dateOfBirth) doc += `Date of Birth: ${d.dateOfBirth}\n`;
-    if (d.dateOfDeath) doc += `Date of Death: ${d.dateOfDeath}\n`;
-    if (d.age) doc += `Age: ${d.age}\n`;
-    if (d.religion) doc += `Religion: ${d.religion}\n`;
-    if (d.maritalStatus) doc += `Marital Status: ${d.maritalStatus}\n`;
-    if (d.occupation) doc += `Occupation: ${d.occupation}\n`;
-    if (d.funeralType) doc += `Funeral Type: ${d.funeralType}\n`;
-    if (d.placeOfDeath) doc += `Place of Death: ${d.placeOfDeath}\n`;
-    if (d.currentLocation) doc += `Current Location: ${d.currentLocation}\n`;
-    if (d.gpName) doc += `GP: ${d.gpName}\n`;
+  const hasValue = (v: any): boolean =>
+    v !== null && v !== undefined && v !== "" && v !== "Not provided";
+
+  const addSection = (title: string, fields: [string, any][]) => {
+    const valid = fields.filter(([, v]) => hasValue(v));
+    if (valid.length === 0) return;
+    doc += `\n${title}\n${"─".repeat(title.length)}\n`;
+    for (const [label, value] of valid) {
+      doc += `${label}: ${value}\n`;
+    }
+  };
+
+  const joinAddr = (...parts: (string | undefined | null)[]) => {
+    const joined = parts.filter(Boolean).join(", ");
+    return joined || undefined;
+  };
+
+  // ── Deceased Information ──────────────────────────────────────────────────
+  const d = intakeData.deceasedInfo || {};
+  addSection("DECEASED INFORMATION", [
+    ["Full Legal Name", d.fullName],
+    ["Title", d.title],
+    ["Forenames", d.forenames],
+    ["Surname", d.surname],
+    ["Known As", d.knownAs],
+    ["Gender", d.gender],
+    ["Date of Birth", d.dateOfBirth],
+    ["Date of Death", d.dateOfDeath],
+    ["Age", d.age],
+    ["Marital Status", d.maritalStatus],
+    ["Religion", d.religion],
+    ["Occupation", d.occupation],
+    ["Funeral Type", d.funeralType],
+    ["Pre-Paid Plan", d.prePaidPlan],
+    ["Pre-Paid Plan Ref", d.prePaidPlanRef],
+    ["Date of Registration", d.dateOfRegistration],
+    ["Home Address", joinAddr(d.homeStreet, d.homeTown, d.homeCounty, d.homePostcode, d.homeCountry)],
+    ["Place of Death", d.placeOfDeath],
+    ["Address of Place of Death", d.placeOfDeathAddress],
+    ["Current Location", d.currentLocation],
+    ["Cause of Death", d.causeOfDeath],
+    ["GP Name", d.gpName],
+    ["GP Surgery", d.gpSurgery],
+  ]);
+
+  // ── Client / Next of Kin ──────────────────────────────────────────────────
+  const c = intakeData.callerInfo || {};
+  addSection("CLIENT / NEXT OF KIN", [
+    ["Name", c.name ? [c.title, c.name].filter(Boolean).join(" ") : undefined],
+    ["Forenames", c.forenames],
+    ["Surname", c.surname],
+    ["Relationship", c.relationship],
+    ["Phone", c.phone],
+    ["Mobile", c.phoneMobile],
+    ["Home Phone", c.phoneHome],
+    ["Email", c.email],
+    ["Address", joinAddr(c.addressStreet, c.addressTown, c.addressCounty, c.addressPostcode, c.addressCountry)],
+    ["Marketing Preferences", c.marketingPreferences],
+    ["Government Support", c.governmentSupport],
+    ["Funeral Finance", c.funeralFinance],
+    ["Estimated Cost", c.estimatedCost],
+    ["Probate Required", c.probate],
+    ["Masonry", c.masonry],
+  ]);
+
+  // ── Billing Details ───────────────────────────────────────────────────────
+  const b = intakeData.billing || {};
+  addSection("BILLING DETAILS", [
+    ["Billing Contact", b.name ? [b.title, b.name].filter(Boolean).join(" ") : undefined],
+    ["Address", b.address],
+    ["Home Phone", b.phoneHome],
+    ["Mobile", b.phoneMobile],
+    ["Work Phone", b.phoneWork],
+    ["Email", b.email],
+    ["Vulnerable Client Assessment", b.vulnerableClient],
+  ]);
+
+  // ── Funeral Source ────────────────────────────────────────────────────────
+  const fs = (intakeData as any).funeralSource || {};
+  addSection("FUNERAL SOURCE", [
+    ["How They Found Us", fs.source],
+    ["Details", fs.details],
+  ]);
+
+  // ── Preparation ───────────────────────────────────────────────────────────
+  const p = intakeData.preparation || {};
+  addSection("PREPARATION", [
+    ["Cremation Forms", p.cremationForms],
+    ["Doctor Name", p.doctorName],
+    ["Doctor Address", p.doctorAddress],
+    ["Remove From Location", p.removeFromLocation],
+    ["Embalming", p.embalming],
+    ["Infectious / Hazard Details", p.infectiousDetails],
+    ["Pacemaker / Implant", p.pacemakerImplant],
+    ["Body Size", p.bodySize],
+    ["Coffin Size", p.coffinSize],
+    ["Coffin Type", p.coffinType],
+    ["Urn Type", p.urnType],
+    ["Coffin Plate Text", p.coffinPlateText],
+    ["Dressing", p.dressed],
+    ["Care Progress", p.careProgress],
+    ["Viewing Requested", p.viewingRequested],
+    ["Viewing Date / Time", p.viewingDateTime],
+    ["Viewing Restrictions", p.viewingRestrictions],
+    ["Jewellery", p.jewellery],
+    ["Grave Details", p.graveDetails],
+    ["Disposition of Ashes", p.dispositionOfAshes],
+  ]);
+
+  // ── Funeral Service ───────────────────────────────────────────────────────
+  const s = intakeData.funeralService || {};
+  addSection("FUNERAL SERVICE", [
+    ["Disposition Type", s.dispositionType],
+    ["Service Date / Time", s.serviceDate ? `${s.serviceDate}${s.serviceTime ? " at " + s.serviceTime : ""}` : undefined],
+    ["Committal Date / Time", s.commitalDate ? `${s.commitalDate}${s.commitalTime ? " at " + s.commitalTime : ""}` : undefined],
+    ["Venue", s.venueName],
+    ["Venue Denomination", s.venueDenomination],
+    ["Venue Address", s.venueAddress],
+    ["Officiant", s.officiant],
+    ["Hearse Type", s.hearseType],
+    ["Limousines", s.limousines],
+    ["Leaving From", s.leavingFrom],
+    ["Route Via", s.routeVia],
+    ["Committal At", s.commitalAt],
+    ["Returning To", s.returningTo],
+    ["Music", s.music],
+    ["Flowers Accepted", s.flowersAccepted],
+    ["Flower Delivery", s.flowersDelivery],
+    ["Flower Notes", s.flowerNotes],
+  ]);
+
+  // ── Orders of Service ─────────────────────────────────────────────────────
+  const o = intakeData.ordersOfService || {};
+  addSection("ORDERS OF SERVICE", [
+    ["Quantity", o.quantity],
+    ["Style / Design", o.styleDesign],
+    ["Photos Included", o.photos],
+    ["Sent to Printer", o.sentToPrinter],
+    ["Proof Received", o.proofReceived],
+    ["Proof Approved", o.proofApproved],
+    ["Order Confirmed", o.orderConfirmed],
+    ["Order Received", o.orderReceived],
+  ]);
+
+  // ── Donations ─────────────────────────────────────────────────────────────
+  const don = intakeData.donations || {};
+  addSection("DONATIONS", [
+    ["Donations Requested", don.requested],
+    ["Closing Date", don.closingDate],
+    ["Recipients", don.recipients],
+  ]);
+
+  // ── Online Tribute ────────────────────────────────────────────────────────
+  const ot = intakeData.onlineTribute || {};
+  addSection("ONLINE TRIBUTE", [
+    ["Requested", ot.requested],
+    ["Set Up By", ot.setupBy],
+    ["Notes", ot.notes],
+  ]);
+
+  // ── Newspaper Notices ─────────────────────────────────────────────────────
+  const nn = intakeData.newspaperNotices || {};
+  addSection("NEWSPAPER NOTICES", [
+    ["Notices", nn.entries],
+  ]);
+
+  // ── Additional Services / General Notes ───────────────────────────────────
+  if (hasValue(intakeData.additionalServices)) {
+    doc += `\nADDITIONAL SERVICES\n${"─".repeat(19)}\n${intakeData.additionalServices}\n`;
   }
-  doc += `\n`;
-
-  doc += `CLIENT / NEXT OF KIN\n`;
-  if (intakeData.callerInfo) {
-    const c = intakeData.callerInfo;
-    if (c.name) doc += `Name: ${c.name}\n`;
-    if (c.relationship) doc += `Relationship: ${c.relationship}\n`;
-    if (c.phone) doc += `Phone: ${c.phone}\n`;
-    if (c.email) doc += `Email: ${c.email}\n`;
-  }
-  doc += `\n`;
-
-  doc += `FUNERAL SERVICE\n`;
-  if (intakeData.funeralService) {
-    const s = intakeData.funeralService;
-    if (s.dispositionType) doc += `Disposition: ${s.dispositionType}\n`;
-    if (s.serviceDate) doc += `Service Date: ${s.serviceDate} ${s.serviceTime || ""}\n`;
-    if (s.venueName) doc += `Venue: ${s.venueName}\n`;
-    if (s.officiant) doc += `Officiant: ${s.officiant}\n`;
-    if (s.music) doc += `Music: ${s.music}\n`;
-  }
-  doc += `\n`;
-
-  if (intakeData.generalNotes) {
-    doc += `GENERAL NOTES\n${intakeData.generalNotes}\n\n`;
+  if (hasValue(intakeData.generalNotes)) {
+    doc += `\nGENERAL NOTES\n${"─".repeat(13)}\n${intakeData.generalNotes}\n`;
   }
 
-  doc += `\nThis document is automatically updated with each call and meeting interaction.\n`;
+  doc += `\n\nThis document is automatically updated with each call, meeting, and data entry.\n`;
   return doc;
 }

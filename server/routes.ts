@@ -519,6 +519,55 @@ export async function registerRoutes(
     }
   });
 
+  // PATCH /api/meetings/:id — edit transcript (re-parses and updates linked case)
+  app.patch("/api/meetings/:id", async (req, res) => {
+    const meetingId = Number(req.params.id);
+    const meeting = await storage.getMeeting(meetingId);
+    if (!meeting) return res.status(404).json({ message: "Meeting not found" });
+
+    const { transcript, summary } = req.body;
+    const meetingUpdates: any = {};
+    if (transcript !== undefined) meetingUpdates.transcript = transcript;
+    if (summary !== undefined) meetingUpdates.summary = summary;
+
+    const updatedMeeting = await storage.updateMeeting(meetingId, meetingUpdates);
+
+    // If transcript changed and meeting is linked to a case, re-parse and cascade updates
+    if (transcript !== undefined && meeting.caseId) {
+      try {
+        const actionItems = Array.isArray(meeting.actionItems) ? meeting.actionItems as string[] : [];
+        const intakeData = await parseMeetingTranscriptToIntake(
+          transcript,
+          meeting.summary || undefined,
+          actionItems
+        );
+        const existingCase = await storage.getCase(meeting.caseId);
+        if (existingCase) {
+          const mergedIntake = mergeIntakeData((existingCase.intakeData as IntakeData) || {}, intakeData);
+          const missingFields = calculateMissingFields(mergedIntake);
+          const caseUpdates: any = { intakeData: mergedIntake, missingFields };
+
+          if (intakeData.deceasedInfo?.fullName &&
+            (existingCase.deceasedName === "Unknown (Pending)" || !existingCase.deceasedName)) {
+            caseUpdates.deceasedName = intakeData.deceasedInfo.fullName;
+          }
+          const extractedReligion = intakeData.deceasedInfo?.religion || intakeData.servicePreferences?.religion;
+          if (extractedReligion &&
+            (existingCase.religion === "Unknown" || !existingCase.religion || existingCase.religion === "Secular")) {
+            caseUpdates.religion = extractedReligion;
+          }
+
+          const updatedCase = await storage.updateCase(meeting.caseId, caseUpdates);
+          await updateIntakeDocument(meeting.caseId, updatedCase, mergedIntake);
+        }
+      } catch (err) {
+        console.error("Failed to re-parse meeting transcript after edit:", err);
+      }
+    }
+
+    res.json(updatedMeeting);
+  });
+
   // Documents
   app.get(api.documents.list.path, async (req, res) => {
     const docs = await storage.getDocuments();

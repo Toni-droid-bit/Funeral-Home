@@ -94,6 +94,8 @@ export default function CaseDetail() {
   const [transcriptDialog, setTranscriptDialog] = useState<{ open: boolean; content: string; director: string }>({ open: false, content: "", director: "" });
   const [editingTranscripts, setEditingTranscripts] = useState<Record<number, string | undefined>>({});
   const [savingTranscripts, setSavingTranscripts] = useState<Record<number, boolean>>({});
+  const [editingMeetingTranscripts, setEditingMeetingTranscripts] = useState<Record<number, string | undefined>>({});
+  const [savingMeetingTranscripts, setSavingMeetingTranscripts] = useState<Record<number, boolean>>({});
 
   const { data: calls = [] } = useQuery<Call[]>({
     queryKey: ["/api/cases", caseId, "calls"],
@@ -146,13 +148,37 @@ export default function CaseDetail() {
     onSuccess: (_, { callId }) => {
       setSavingTranscripts(prev => ({ ...prev, [callId]: false }));
       setEditingTranscripts(prev => { const n = { ...prev }; delete n[callId]; return n; });
-      queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", caseId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/cases", caseId, "calls"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/cases", caseId, "checklist"] });
       toast({ title: "Transcript saved", description: "Case intake data has been updated." });
+      // 2-second delay so the backend has time to finish re-running the intake parser
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", caseId] });
+        queryClient.invalidateQueries({ queryKey: ["/api/cases", caseId, "calls"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/cases", caseId, "checklist"] });
+      }, 2000);
     },
     onError: (_, { callId }) => {
       setSavingTranscripts(prev => ({ ...prev, [callId]: false }));
+      toast({ title: "Save failed", description: "Could not save transcript.", variant: "destructive" });
+    },
+  });
+
+  const patchMeetingMutation = useMutation({
+    mutationFn: async ({ meetingId, transcript }: { meetingId: number; transcript: string }) => {
+      return apiRequest("PATCH", `/api/meetings/${meetingId}`, { transcript });
+    },
+    onSuccess: (_, { meetingId }) => {
+      setSavingMeetingTranscripts(prev => ({ ...prev, [meetingId]: false }));
+      setEditingMeetingTranscripts(prev => { const n = { ...prev }; delete n[meetingId]; return n; });
+      toast({ title: "Transcript saved", description: "Case intake data has been updated." });
+      // 2-second delay so the backend has time to finish re-running the intake parser
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", caseId] });
+        queryClient.invalidateQueries({ queryKey: ["/api/cases", caseId, "meetings"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/cases", caseId, "checklist"] });
+      }, 2000);
+    },
+    onError: (_, { meetingId }) => {
+      setSavingMeetingTranscripts(prev => ({ ...prev, [meetingId]: false }));
       toast({ title: "Save failed", description: "Could not save transcript.", variant: "destructive" });
     },
   });
@@ -175,8 +201,11 @@ export default function CaseDetail() {
       return apiRequest("POST", `/api/cases/${caseId}/checklist/${itemId}/update-value`, { value });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/cases", caseId, "checklist"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", caseId] });
+      // 2-second delay so the backend has time to finish regenerating the summary document
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/cases", caseId, "checklist"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", caseId] });
+      }, 2000);
     },
     onError: () => {
       toast({ title: "Save failed", description: "Could not save checklist value.", variant: "destructive" });
@@ -707,34 +736,80 @@ export default function CaseDetail() {
                 </CardHeader>
                 <CardContent>
                   {meetings.length > 0 ? (
-                    <div className="space-y-3">
-                      {meetings.map(meeting => (
-                        <div key={meeting.id} className="p-3 rounded-lg bg-muted/30 border">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="font-medium">Meeting with {meeting.directorName}</span>
-                            <StatusBadge status={meeting.status || "completed"} />
-                          </div>
-                          {meeting.summary && (
-                            <p className="text-sm text-muted-foreground">{meeting.summary}</p>
-                          )}
-                          <div className="flex items-center justify-between mt-2">
-                            <span className="text-xs text-muted-foreground">
-                              {meeting.createdAt && format(new Date(meeting.createdAt), "MMM d, yyyy h:mm a")}
-                            </span>
-                            {meeting.transcript && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-7 text-xs gap-1"
-                                onClick={() => setTranscriptDialog({ open: true, content: meeting.transcript!, director: meeting.directorName || "Unknown" })}
-                              >
-                                <FileText className="w-3 h-3" />
-                                View Full Transcript
-                              </Button>
+                    <div className="space-y-4">
+                      {meetings.map(meeting => {
+                        const isEditingTranscript = meeting.id in editingMeetingTranscripts;
+                        const transcriptDraft = editingMeetingTranscripts[meeting.id];
+                        const isSaving = savingMeetingTranscripts[meeting.id];
+                        return (
+                          <div key={meeting.id} className="p-3 rounded-lg bg-muted/30 border">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="font-medium">Meeting with {meeting.directorName}</span>
+                              <StatusBadge status={meeting.status || "completed"} />
+                            </div>
+                            {meeting.summary && (
+                              <p className="text-sm text-muted-foreground mb-2">{meeting.summary}</p>
                             )}
+                            <div className="text-xs text-muted-foreground mb-2">
+                              {meeting.createdAt && format(new Date(meeting.createdAt), "MMM d, yyyy h:mm a")}
+                            </div>
+                            {/* Editable transcript */}
+                            <div className="mt-2">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-xs font-medium text-muted-foreground">Transcript</span>
+                                {!isEditingTranscript && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 text-xs gap-1 px-2"
+                                    onClick={() => setEditingMeetingTranscripts(prev => ({ ...prev, [meeting.id]: meeting.transcript || "" }))}
+                                  >
+                                    <Pencil className="w-3 h-3" /> Edit
+                                  </Button>
+                                )}
+                              </div>
+                              {isEditingTranscript ? (
+                                <div className="space-y-2">
+                                  <textarea
+                                    className="w-full text-xs bg-background border border-primary rounded p-2 resize-y min-h-[8rem] focus:outline-none"
+                                    value={transcriptDraft}
+                                    onChange={e => setEditingMeetingTranscripts(prev => ({ ...prev, [meeting.id]: e.target.value }))}
+                                    placeholder="Enter transcript..."
+                                  />
+                                  <div className="flex gap-2">
+                                    <Button
+                                      size="sm"
+                                      className="h-7 text-xs"
+                                      disabled={isSaving}
+                                      onClick={() => {
+                                        setSavingMeetingTranscripts(prev => ({ ...prev, [meeting.id]: true }));
+                                        patchMeetingMutation.mutate({ meetingId: meeting.id, transcript: transcriptDraft || "" });
+                                      }}
+                                    >
+                                      {isSaving ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+                                      Save & Re-parse
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-7 text-xs"
+                                      onClick={() => setEditingMeetingTranscripts(prev => { const n = { ...prev }; delete n[meeting.id]; return n; })}
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : meeting.transcript ? (
+                                <div className="text-xs text-muted-foreground bg-background border rounded p-2 max-h-32 overflow-y-auto whitespace-pre-wrap">
+                                  {meeting.transcript}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-muted-foreground/50 italic">No transcript available. Click Edit to add one.</p>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="text-center py-8 text-muted-foreground">
