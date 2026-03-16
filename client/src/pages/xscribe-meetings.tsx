@@ -140,6 +140,9 @@ export default function XScribeMeetings() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [showChecklistPrompt, setShowChecklistPrompt] = useState(true);
   const [isProcessingTranscript, setIsProcessingTranscript] = useState(false);
+  const [isNewCase, setIsNewCase] = useState(false);
+  const [newCaseName, setNewCaseName] = useState("");
+  const [checklistInputs, setChecklistInputs] = useState<Record<string, string>>({});
 
   // Fetch intake data when case is selected
   const { data: intakeData } = useQuery({
@@ -178,8 +181,8 @@ export default function XScribeMeetings() {
       return res.json();
     },
     enabled: !!selectedCaseId && (mode === "review" || mode === "recording"),
-    // Refresh every 10 seconds during recording to catch auto-updates
-    refetchInterval: mode === "recording" ? 10000 : false,
+    // Refresh every 5 seconds during recording to catch auto-updates
+    refetchInterval: mode === "recording" ? 5000 : false,
   });
 
   const toggleChecklistMutation = useMutation({
@@ -198,6 +201,26 @@ export default function XScribeMeetings() {
     },
   });
 
+  const updateChecklistValueMutation = useMutation({
+    mutationFn: async ({ itemId, value }: { itemId: string; value: string }) => {
+      return apiRequest("POST", `/api/cases/${selectedCaseId}/checklist/${itemId}/update-value`, { value });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/cases", selectedCaseId, "checklist"] });
+    },
+  });
+
+  const handleChecklistInput = async (itemId: string, value: string) => {
+    if (!selectedCaseId || !value.trim()) return;
+    try {
+      await apiRequest("POST", `/api/cases/${selectedCaseId}/checklist/${itemId}/update-value`, { value: value.trim() });
+      await apiRequest("POST", `/api/cases/${selectedCaseId}/checklist/${itemId}/toggle`, {});
+    } catch {
+      // item may already be completed or have fieldMapping auto-completion
+    }
+    queryClient.invalidateQueries({ queryKey: ["/api/cases", selectedCaseId, "checklist"] });
+  };
+
   // Process transcript in real-time to update checklist
   const processTranscriptMutation = useMutation({
     mutationFn: async (transcript: string) => {
@@ -214,14 +237,14 @@ export default function XScribeMeetings() {
     },
   });
 
-  // Auto-process transcript every 30 seconds during recording
+  // Auto-process transcript every 5 seconds during recording
   useEffect(() => {
     if (mode === "recording" && selectedCaseId && fullTranscript && fullTranscript.length > 50) {
       const interval = setInterval(() => {
         setIsProcessingTranscript(true);
         processTranscriptMutation.mutate(fullTranscript);
         setTimeout(() => setIsProcessingTranscript(false), 2000);
-      }, 30000); // Every 30 seconds
+      }, 5000); // Every 5 seconds
 
       return () => clearInterval(interval);
     }
@@ -318,6 +341,9 @@ export default function XScribeMeetings() {
     setLanguage("en");
     setIsConnecting(false);
     setShowChecklistPrompt(true);
+    setIsNewCase(false);
+    setNewCaseName("");
+    setChecklistInputs({});
   };
 
   const cleanupRecording = () => {
@@ -495,6 +521,26 @@ export default function XScribeMeetings() {
     });
   };
 
+  const handleStartRecording = async () => {
+    if (isNewCase && newCaseName.trim()) {
+      try {
+        const res = await fetch("/api/cases", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deceasedName: newCaseName.trim(), status: "active" }),
+        });
+        if (!res.ok) throw new Error("Failed to create case");
+        const newCase = await res.json();
+        setSelectedCaseId(String(newCase.id));
+        queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+      } catch {
+        toast({ title: "Failed to create case", description: "Could not create the new case. Please try again.", variant: "destructive" });
+        return;
+      }
+    }
+    startRecording();
+  };
+
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60)
       .toString()
@@ -531,25 +577,48 @@ export default function XScribeMeetings() {
           <CardContent className="p-6 space-y-5">
             {/* Case Selection */}
             <div>
-              <label className="block text-sm font-medium text-foreground mb-1.5">
-                Link to Case{" "}
-                <span className="text-muted-foreground font-normal">
-                  (optional)
-                </span>
-              </label>
-              <select
-                value={selectedCaseId}
-                onChange={(e) => setSelectedCaseId(e.target.value)}
-                className="w-full border border-input rounded-md p-2.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                data-testid="select-case"
-              >
-                <option value="">No case selected</option>
-                {cases?.map((c: any) => (
-                  <option key={c.id} value={c.id}>
-                    {c.deceasedName} — {c.religion || "N/A"} ({c.status})
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-sm font-medium text-foreground">
+                  Link to Case{" "}
+                  <span className="text-muted-foreground font-normal">(optional)</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer text-sm text-muted-foreground select-none">
+                  <input
+                    type="checkbox"
+                    checked={isNewCase}
+                    onChange={(e) => {
+                      setIsNewCase(e.target.checked);
+                      if (e.target.checked) setSelectedCaseId("");
+                    }}
+                    className="rounded"
+                  />
+                  New case
+                </label>
+              </div>
+              {isNewCase ? (
+                <input
+                  type="text"
+                  value={newCaseName}
+                  onChange={(e) => setNewCaseName(e.target.value)}
+                  placeholder="Deceased name (e.g. John Smith)"
+                  className="w-full border border-input rounded-md p-2.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                  autoFocus
+                />
+              ) : (
+                <select
+                  value={selectedCaseId}
+                  onChange={(e) => setSelectedCaseId(e.target.value)}
+                  className="w-full border border-input rounded-md p-2.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                  data-testid="select-case"
+                >
+                  <option value="">No case selected</option>
+                  {cases?.map((c: any) => (
+                    <option key={c.id} value={c.id}>
+                      {c.deceasedName} — {c.religion || "N/A"} ({c.status})
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             {/* Pre-filled data from xLink (when case is selected) */}
@@ -651,8 +720,8 @@ export default function XScribeMeetings() {
             {/* Start Button */}
             <Button
               className="w-full bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-200 py-6 text-base"
-              onClick={startRecording}
-              disabled={isConnecting}
+              onClick={handleStartRecording}
+              disabled={isConnecting || (isNewCase && !newCaseName.trim())}
             >
               {isConnecting ? (
                 <>
@@ -803,11 +872,11 @@ export default function XScribeMeetings() {
                   {computedChecklist.items.map(item => {
                     const config = CATEGORY_CONFIG[item.category];
                     return (
-                      <div 
+                      <div
                         key={item.id}
                         className={`p-2 rounded text-sm transition-all ${
-                          item.isCompleted 
-                            ? "bg-green-50 dark:bg-green-900/20" 
+                          item.isCompleted
+                            ? "bg-green-50 dark:bg-green-900/20"
                             : config.bgColor
                         }`}
                       >
@@ -821,6 +890,24 @@ export default function XScribeMeetings() {
                             {item.question}
                           </span>
                         </div>
+                        {!item.isCompleted && (
+                          <input
+                            type="text"
+                            placeholder="Type to complete..."
+                            value={checklistInputs[item.id] || ""}
+                            onChange={(e) => setChecklistInputs(prev => ({ ...prev, [item.id]: e.target.value }))}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && e.currentTarget.value.trim()) {
+                                handleChecklistInput(item.id, e.currentTarget.value.trim());
+                              }
+                            }}
+                            onBlur={(e) => {
+                              if (e.target.value.trim()) handleChecklistInput(item.id, e.target.value.trim());
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="mt-1.5 w-full px-2 py-1 text-xs border border-input rounded bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                          />
+                        )}
                       </div>
                     );
                   })}
@@ -977,29 +1064,43 @@ export default function XScribeMeetings() {
                           const canToggle = !isAutoCompleted;
 
                           return (
-                            <button 
-                              key={item.id}
-                              onClick={() => canToggle && toggleChecklistMutation.mutate(item.id)}
-                              disabled={toggleChecklistMutation.isPending || !canToggle}
-                              className={`flex items-start gap-2 p-2 rounded text-sm w-full text-left transition-colors ${
-                                item.isCompleted 
-                                  ? "bg-green-50 dark:bg-green-900/20" 
-                                  : `${config.bgColor}`
-                              } ${canToggle ? "hover:opacity-80 cursor-pointer" : "cursor-default"}`}
-                              data-testid={`checklist-item-${item.id}`}
-                            >
-                              {item.isCompleted ? (
-                                <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
-                              ) : (
-                                <div className={`w-4 h-4 border-2 rounded flex-shrink-0 mt-0.5 ${config.iconColor} border-current`} />
+                            <div key={item.id} className={`p-2 rounded text-sm ${item.isCompleted ? "bg-green-50 dark:bg-green-900/20" : config.bgColor}`} data-testid={`checklist-item-${item.id}`}>
+                              <button
+                                onClick={() => canToggle && toggleChecklistMutation.mutate(item.id)}
+                                disabled={toggleChecklistMutation.isPending || !canToggle}
+                                className={`flex items-start gap-2 w-full text-left ${canToggle ? "hover:opacity-80 cursor-pointer" : "cursor-default"}`}
+                              >
+                                {item.isCompleted ? (
+                                  <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
+                                ) : (
+                                  <div className={`w-4 h-4 border-2 rounded flex-shrink-0 mt-0.5 ${config.iconColor} border-current`} />
+                                )}
+                                <span className={`flex-1 ${item.isCompleted ? "text-green-700 dark:text-green-300" : "text-foreground"}`}>
+                                  {item.question}
+                                </span>
+                                {isAutoCompleted && (
+                                  <span className="text-xs text-muted-foreground">(auto)</span>
+                                )}
+                              </button>
+                              {!item.isCompleted && (
+                                <input
+                                  type="text"
+                                  placeholder="Type to complete..."
+                                  value={checklistInputs[item.id] || ""}
+                                  onChange={(e) => setChecklistInputs(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" && e.currentTarget.value.trim()) {
+                                      handleChecklistInput(item.id, e.currentTarget.value.trim());
+                                    }
+                                  }}
+                                  onBlur={(e) => {
+                                    if (e.target.value.trim()) handleChecklistInput(item.id, e.target.value.trim());
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="mt-1.5 w-full px-2 py-1 text-xs border border-input rounded bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                                />
                               )}
-                              <span className={`flex-1 ${item.isCompleted ? "text-green-700 dark:text-green-300" : "text-foreground"}`}>
-                                {item.question}
-                              </span>
-                              {isAutoCompleted && (
-                                <span className="text-xs text-muted-foreground">(auto)</span>
-                              )}
-                            </button>
+                            </div>
                           );
                         })}
                       </div>

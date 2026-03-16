@@ -3,9 +3,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
-import { setupAuth, registerAuthRoutes } from "./replit_integrations/auth";
-import { registerAudioRoutes } from "./replit_integrations/audio";
-import { registerImageRoutes } from "./replit_integrations/image";
+import { setupAuth, registerAuthRoutes } from "./auth";
 import { registerVapiRoutes } from "./vapi";
 import { setupDeepgramWebSocket } from "./deepgram";
 import { getFieldLabel, calculateMissingFields, validateIntakeData, parseCallTranscriptToIntake, parseMeetingTranscriptToIntake, mergeIntakeData, generateIntakeDocument } from "./intake-parser";
@@ -44,10 +42,6 @@ export async function registerRoutes(
   // Auth Setup
   await setupAuth(app);
   registerAuthRoutes(app);
-
-  // AI Integrations
-  registerAudioRoutes(app);
-  registerImageRoutes(app);
 
   // Vapi.ai Voice Calling
   registerVapiRoutes(app);
@@ -767,6 +761,12 @@ export async function registerRoutes(
     const items = (template?.items as ChecklistItem[]) || [];
     const completedItems = (caseItem.checklistCompletedItems as string[]) || [];
 
+    // Fetch calls and meetings for this case
+    const [caseCalls, caseMeetings] = await Promise.all([
+      storage.getCallsByCaseId(caseId),
+      storage.getMeetingsByCaseId(caseId),
+    ]);
+
     // Build the intake summary document content (plain text)
     const sections: string[] = [];
 
@@ -802,6 +802,38 @@ export async function registerRoutes(
     sections.push(`Religion: ${intakeData.servicePreferences?.religion || 'Not specified'}`);
     sections.push(`Urgency: ${intakeData.servicePreferences?.urgency || 'Not specified'}`);
     sections.push('');
+
+    // Call History
+    if (caseCalls.length > 0) {
+      sections.push('CALL HISTORY');
+      caseCalls.forEach((call: any, idx: number) => {
+        const date = call.createdAt ? new Date(call.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Unknown date';
+        sections.push(`Call ${idx + 1} — ${date}`);
+        if (call.callerName) sections.push(`  Caller: ${call.callerName} (${call.callerPhone || 'No phone'})`);
+        if (call.summary) sections.push(`  Summary: ${call.summary}`);
+        if (call.sentiment) sections.push(`  Sentiment: ${call.sentiment}`);
+        if (call.transcript) sections.push(`  Transcript:\n${call.transcript.split('\n').map((l: string) => `    ${l}`).join('\n')}`);
+      });
+      sections.push('');
+    }
+
+    // Meeting History
+    if (caseMeetings.length > 0) {
+      sections.push('ARRANGEMENT MEETING HISTORY');
+      caseMeetings.forEach((meeting: any, idx: number) => {
+        const date = meeting.createdAt ? new Date(meeting.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Unknown date';
+        sections.push(`Meeting ${idx + 1} — ${date}`);
+        if (meeting.directorName) sections.push(`  Director: ${meeting.directorName}`);
+        if (meeting.language) sections.push(`  Language: ${meeting.language}`);
+        if (meeting.summary) sections.push(`  Summary: ${meeting.summary}`);
+        if (meeting.actionItems && Array.isArray(meeting.actionItems) && meeting.actionItems.length > 0) {
+          sections.push(`  Action Items:`);
+          (meeting.actionItems as string[]).forEach((item: string) => sections.push(`    - ${item}`));
+        }
+        if (meeting.transcript) sections.push(`  Transcript:\n${meeting.transcript.split('\n').map((l: string) => `    ${l}`).join('\n')}`);
+      });
+      sections.push('');
+    }
 
     // Checklist Status
     const completedCount = items.filter(item => {

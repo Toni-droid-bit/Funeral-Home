@@ -58,51 +58,57 @@ export default function Dashboard() {
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <motion.div variants={item}>
-          <Card className="border-l-4 border-l-primary shadow-md hover:shadow-lg transition-shadow">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Active Cases</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <span className="text-4xl font-bold font-display text-foreground">{stats?.activeCases || 0}</span>
-                <div className="p-3 bg-primary/10 rounded-full">
-                  <Users className="w-6 h-6 text-primary" />
+          <Link href="/cases">
+            <Card className="border-l-4 border-l-primary shadow-md hover:shadow-lg transition-shadow cursor-pointer">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Active Cases</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between">
+                  <span className="text-4xl font-bold font-display text-foreground">{stats?.activeCases || 0}</span>
+                  <div className="p-3 bg-primary/10 rounded-full">
+                    <Users className="w-6 h-6 text-primary" />
+                  </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </Link>
         </motion.div>
 
         <motion.div variants={item}>
-          <Card className="border-l-4 border-l-amber-500 shadow-md hover:shadow-lg transition-shadow">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Pending Calls</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <span className="text-4xl font-bold font-display text-foreground">{stats?.pendingCalls || 0}</span>
-                <div className="p-3 bg-amber-100 rounded-full">
-                  <Phone className="w-6 h-6 text-amber-600" />
+          <Link href="/communications">
+            <Card className="border-l-4 border-l-amber-500 shadow-md hover:shadow-lg transition-shadow cursor-pointer">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Pending Calls</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between">
+                  <span className="text-4xl font-bold font-display text-foreground">{stats?.pendingCalls || 0}</span>
+                  <div className="p-3 bg-amber-100 rounded-full">
+                    <Phone className="w-6 h-6 text-amber-600" />
+                  </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </Link>
         </motion.div>
 
         <motion.div variants={item}>
-          <Card className="border-l-4 border-l-blue-500 shadow-md hover:shadow-lg transition-shadow">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Upcoming Meetings</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <span className="text-4xl font-bold font-display text-foreground">{stats?.upcomingMeetings || 0}</span>
-                <div className="p-3 bg-blue-100 rounded-full">
-                  <Mic className="w-6 h-6 text-blue-600" />
+          <Link href="/communications">
+            <Card className="border-l-4 border-l-blue-500 shadow-md hover:shadow-lg transition-shadow cursor-pointer">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Upcoming Meetings</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between">
+                  <span className="text-4xl font-bold font-display text-foreground">{stats?.upcomingMeetings || 0}</span>
+                  <div className="p-3 bg-blue-100 rounded-full">
+                    <Mic className="w-6 h-6 text-blue-600" />
+                  </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </Link>
         </motion.div>
       </div>
 

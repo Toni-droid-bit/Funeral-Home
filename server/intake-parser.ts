@@ -1,9 +1,8 @@
-import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 import { IntakeData, intakeDataSchema, REQUIRED_INTAKE_FIELDS } from "@shared/schema";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
 // Validate and return intake data, defaulting to empty on failure
@@ -20,70 +19,77 @@ export async function parseCallTranscriptToIntake(
   transcript: string,
   summary?: string
 ): Promise<IntakeData> {
-  const prompt = `You are analyzing a phone call transcript from a funeral home intake call. This is critical for building a case profile.
+  console.log(`[intake-parser] parseCallTranscriptToIntake — transcript length: ${transcript.length}`);
 
-PRIORITY INFORMATION TO EXTRACT (First Call Essentials):
-1. Name of the deceased (who passed away)
-2. Caller's relationship to the deceased (son, daughter, spouse, sibling, etc.)
-3. When did they die (date of death)
-4. Caller's contact phone number
-5. Religion - especially important for Muslim or Jewish as they require urgent 24-hour burial
+  const prompt = `You are a data extraction assistant for a funeral home. Extract structured information from the call transcript below.
+
+YOU MUST EXTRACT THESE 5 FIELDS IF MENTIONED — do not leave them null if the information appears anywhere in the text:
+1. deceasedInfo.fullName — the name of the person who died (look for phrases like "my mother Margaret", "for John Smith", "he was called...", "her name is...")
+2. deceasedInfo.dateOfDeath — when they died. If they say "today", "yesterday", "this morning" or a relative date, convert to YYYY-MM-DD using today's approximate date
+3. callerInfo.name — the name of the person calling (look for "my name is", "this is", "I'm calling on behalf of", "I'm [name]")
+4. callerInfo.phone — any phone number spoken in the call (keep digits, spaces, plus signs — e.g. "07722 387530" or "+44 7722 387530")
+5. deceasedInfo.currentLocation — where the body is right now (hospital name, home address, hospice, care home, morgue, coroner, etc.)
 
 TRANSCRIPT:
 ${transcript}
 
 ${summary ? `SUMMARY:\n${summary}` : ""}
 
-Extract ALL mentioned information. Pay special attention to:
-- Any mention of Muslim, Islam, Islamic, Jewish, or similar religious references
-- Any mention of urgency, quick burial, 24-hour burial, or religious requirements
-- The caller identifying themselves (e.g., "I'm calling about my father" means relationship is son/daughter)
+ADDITIONAL FIELDS TO EXTRACT IF PRESENT:
+- callerInfo.relationship — how the caller relates to the deceased (son, daughter, spouse, sibling, friend, etc.)
+- callerInfo.email — email address if mentioned
+- deceasedInfo.dateOfBirth — date of birth if mentioned
+- deceasedInfo.age — age of deceased if mentioned
+- deceasedInfo.causeOfDeath — cause of death if mentioned
+- servicePreferences.burialOrCremation — burial or cremation preference (default to burial for Muslim/Jewish)
+- servicePreferences.religion — any religion or faith mentioned (Muslim, Jewish, Christian, Catholic, Hindu, Sikh, Secular, etc.)
+- servicePreferences.urgency — set to "urgent-24hr" ONLY if Muslim or Jewish faith is mentioned, otherwise "normal"
+- servicePreferences.serviceType — type of service requested
+- appointment.preferredDate / appointment.preferredTime — any requested meeting time
 
-Return ONLY a valid JSON object with this structure (use null for fields not mentioned):
+Return ONLY a valid JSON object. Use null for any field not found. Do not add commentary.
 {
   "callerInfo": {
-    "name": "caller's full name or null",
-    "phone": "phone number or null (extract from transcript if caller provides it)",
-    "relationship": "relationship to deceased (e.g., spouse, son, daughter, brother, sister, friend) or null",
-    "email": "email address or null"
+    "name": "string or null",
+    "phone": "string or null",
+    "relationship": "string or null",
+    "email": "string or null"
   },
   "deceasedInfo": {
-    "fullName": "deceased person's full name or null",
-    "dateOfDeath": "date of death in YYYY-MM-DD format or null (if they say 'today', 'yesterday', 'this morning', estimate)",
-    "dateOfBirth": "date of birth in YYYY-MM-DD format or null",
-    "age": numeric age or null,
-    "currentLocation": "where the body is (hospital, home, care home, coroner, hospice) or null",
-    "causeOfDeath": "cause of death if mentioned or null"
+    "fullName": "string or null",
+    "dateOfDeath": "YYYY-MM-DD or null",
+    "dateOfBirth": "YYYY-MM-DD or null",
+    "age": number or null,
+    "currentLocation": "string or null",
+    "causeOfDeath": "string or null"
   },
   "servicePreferences": {
-    "burialOrCremation": "burial (default for Muslim/Jewish), cremation, or undecided or null",
-    "religion": "religion or belief system (Muslim, Jewish, Christian, Catholic, Hindu, Sikh, Secular, etc.) or null",
-    "subTradition": "specific denomination if mentioned or null",
-    "urgency": "urgent-24hr (for Muslim or Jewish) or normal or null - IMPORTANT: always set to urgent-24hr if Muslim or Jewish is mentioned",
-    "serviceType": "full service, direct cremation, memorial, etc. or null"
+    "burialOrCremation": "burial or cremation or undecided or null",
+    "religion": "string or null",
+    "subTradition": "string or null",
+    "urgency": "urgent-24hr or normal or null",
+    "serviceType": "string or null"
   },
   "appointment": {
-    "preferredDate": "preferred meeting date or null",
-    "preferredTime": "preferred meeting time or null",
-    "attendeeCount": numeric count or null
+    "preferredDate": "string or null",
+    "preferredTime": "string or null",
+    "attendeeCount": number or null
   }
-}
-
-Return ONLY the JSON object, no other text.`;
+}`;
 
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.1,
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
       max_tokens: 1000,
+      messages: [{ role: "user", content: prompt }],
     });
 
-    const content = response.choices[0]?.message?.content?.trim() || "{}";
+    const content = response.content[0]?.type === "text" ? response.content[0].text.trim() : "{}";
+    console.log(`[intake-parser] raw AI response: ${content.substring(0, 300)}`);
 
-    // Extract JSON from response (handle markdown code blocks)
+    // Strip markdown code fences if present
     let jsonStr = content;
-    if (content.startsWith("```")) {
+    if (content.includes("```")) {
       jsonStr = content.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
     }
 
@@ -93,15 +99,12 @@ Return ONLY the JSON object, no other text.`;
     const cleanObject = (obj: any): any => {
       if (obj === null || obj === undefined) return undefined;
       if (typeof obj !== "object") return obj;
-
       const result: any = {};
       for (const [key, value] of Object.entries(obj)) {
         if (value !== null && value !== undefined) {
           if (typeof value === "object" && !Array.isArray(value)) {
             const cleaned = cleanObject(value);
-            if (Object.keys(cleaned).length > 0) {
-              result[key] = cleaned;
-            }
+            if (Object.keys(cleaned).length > 0) result[key] = cleaned;
           } else {
             result[key] = value;
           }
@@ -111,11 +114,11 @@ Return ONLY the JSON object, no other text.`;
     };
 
     const cleaned = cleanObject(parsed);
-
-    // Validate against schema
-    return validateIntakeData(cleaned);
-  } catch (error) {
-    console.error("Failed to parse call transcript:", error);
+    const validated = validateIntakeData(cleaned);
+    console.log(`[intake-parser] extracted — deceasedName: ${validated.deceasedInfo?.fullName ?? "null"}, callerName: ${validated.callerInfo?.name ?? "null"}, phone: ${validated.callerInfo?.phone ?? "null"}, dod: ${validated.deceasedInfo?.dateOfDeath ?? "null"}, location: ${validated.deceasedInfo?.currentLocation ?? "null"}`);
+    return validated;
+  } catch (error: any) {
+    console.error(`[intake-parser] parseCallTranscriptToIntake failed: ${error?.message || error}`);
     return {};
   }
 }
@@ -177,37 +180,22 @@ export async function parseMeetingTranscriptToIntake(
   summary?: string,
   actionItems?: string[]
 ): Promise<IntakeData> {
-  const prompt = `You are analyzing a funeral arrangement meeting transcript between a funeral director and family members. This is an in-person meeting with more detailed information than a phone call.
+  console.log(`[intake-parser] parseMeetingTranscriptToIntake — transcript length: ${transcript.length}`);
 
-EXTRACT ALL INFORMATION discussed in the meeting, including:
+  const prompt = `You are a data extraction assistant for a funeral home. Extract structured information from the arrangement meeting transcript below.
 
-1. DECEASED INFORMATION:
-   - Full legal name
-   - Date of birth, date of death, age
-   - Current location (hospital, home, hospice, morgue)
-   - Cause of death if mentioned
+YOU MUST EXTRACT THESE 10 FIELDS IF MENTIONED — do not leave them null if the information appears anywhere in the text:
 
-2. CALLER/FAMILY INFORMATION:
-   - Names of family members present
-   - Relationship to deceased
-   - Contact phone numbers and emails
-   - Next of kin details
-
-3. SERVICE PREFERENCES:
-   - Burial vs cremation
-   - Religion/faith tradition
-   - Service type (full service, direct cremation, memorial)
-   - Cemetery or crematorium preference
-   - Urgency (24hr for Muslim/Jewish)
-
-4. ADDITIONAL DETAILS:
-   - Clothing/dressing preferences
-   - Obituary details discussed
-   - Flowers preferences
-   - Music selections
-   - Readings or poems
-   - Reception/wake plans
-   - Donations in lieu of flowers
+1. deceasedInfo.fullName — the full legal name of the person who died (look for "the deceased is", "her name was", "his name is", "for [name]", "about [name]")
+2. deceasedInfo.dateOfDeath — when they died, in YYYY-MM-DD format. Convert relative dates ("yesterday", "last Tuesday", "02/21/2026") to ISO format
+3. deceasedInfo.dateOfBirth — date of birth in YYYY-MM-DD format if mentioned
+4. callerInfo.name — the name of the primary family contact or next of kin present (look for "my name is", "I'm [name]", "the next of kin is", "authorized person is")
+5. callerInfo.relationship — how the primary contact relates to the deceased (son, daughter, spouse, husband, wife, brother, sister, mother, father, friend, etc.)
+6. callerInfo.phone — any phone number spoken or mentioned (keep digits, spaces, plus signs — e.g. "07722 387530" or "+44 7722 387530")
+7. deceasedInfo.currentLocation — where the body is right now (hospital name, home address, care home name, hospice, coroner, mortuary, etc.)
+8. servicePreferences.religion — any religion or faith mentioned (Muslim, Islamic, Jewish, Christian, Catholic, Church of England, Hindu, Sikh, Secular, Humanist, etc.)
+9. servicePreferences.burialOrCremation — "burial" or "cremation" or "undecided". Default to "burial" if Muslim or Jewish faith is mentioned
+10. servicePreferences.urgency — set to "urgent-24hr" if Muslim or Jewish faith is mentioned anywhere in the transcript, otherwise "normal"
 
 TRANSCRIPT:
 ${transcript}
@@ -215,58 +203,74 @@ ${transcript}
 ${summary ? `MEETING SUMMARY:\n${summary}` : ""}
 ${actionItems?.length ? `ACTION ITEMS:\n${actionItems.join("\n")}` : ""}
 
-Return ONLY a valid JSON object with this structure (use null for fields not mentioned):
+ADDITIONAL FIELDS TO EXTRACT IF PRESENT:
+- deceasedInfo.age — numeric age of deceased
+- deceasedInfo.causeOfDeath — cause of death if mentioned
+- callerInfo.email — email address if mentioned
+- servicePreferences.subTradition — specific denomination (e.g. Sunni, Shia, Catholic, Baptist)
+- servicePreferences.serviceType — full service, direct cremation, memorial, graveside, etc.
+- servicePreferences.cemeteryOrCrematorium — name of cemetery or crematorium
+- servicePreferences.clothing — clothing or dressing preferences for the deceased
+- servicePreferences.obituary — any obituary details discussed (birthplace, occupation, family members)
+- servicePreferences.flowers — flower preferences
+- servicePreferences.music — music selections
+- servicePreferences.readings — readings or poems
+- servicePreferences.reception — reception or wake details
+- servicePreferences.donations — charity donations in lieu of flowers
+- appointment.preferredDate — next meeting or service date
+- appointment.preferredTime — next meeting or service time
+- appointment.attendeeCount — expected number of attendees
+
+Return ONLY a valid JSON object. Use null for any field not found. Do not add commentary or markdown.
 {
   "callerInfo": {
-    "name": "primary contact's full name or null",
-    "phone": "phone number or null",
-    "relationship": "relationship to deceased or null",
-    "email": "email address or null"
+    "name": "string or null",
+    "phone": "string or null",
+    "relationship": "string or null",
+    "email": "string or null"
   },
   "deceasedInfo": {
-    "fullName": "deceased person's full legal name or null",
-    "dateOfDeath": "date of death in YYYY-MM-DD format or null",
-    "dateOfBirth": "date of birth in YYYY-MM-DD format or null",
-    "age": numeric age or null,
-    "currentLocation": "where the body is or null",
-    "causeOfDeath": "cause of death if mentioned or null"
+    "fullName": "string or null",
+    "dateOfDeath": "YYYY-MM-DD or null",
+    "dateOfBirth": "YYYY-MM-DD or null",
+    "age": number or null,
+    "currentLocation": "string or null",
+    "causeOfDeath": "string or null"
   },
   "servicePreferences": {
-    "burialOrCremation": "burial, cremation, or undecided or null",
-    "religion": "religion or belief system or null",
-    "subTradition": "specific denomination if mentioned or null",
-    "urgency": "urgent-24hr (for Muslim or Jewish) or normal or null",
-    "serviceType": "full service, direct cremation, memorial, graveside, etc. or null",
-    "cemeteryOrCrematorium": "name of cemetery or crematorium or null",
-    "clothing": "clothing preferences or null",
-    "obituary": "obituary details or null",
-    "flowers": "flower preferences or null",
-    "music": "music selections or null",
-    "readings": "readings or poems or null",
-    "reception": "reception/wake details or null",
-    "donations": "charity donations info or null"
+    "burialOrCremation": "burial or cremation or undecided or null",
+    "religion": "string or null",
+    "subTradition": "string or null",
+    "urgency": "urgent-24hr or normal or null",
+    "serviceType": "string or null",
+    "cemeteryOrCrematorium": "string or null",
+    "clothing": "string or null",
+    "obituary": "string or null",
+    "flowers": "string or null",
+    "music": "string or null",
+    "readings": "string or null",
+    "reception": "string or null",
+    "donations": "string or null"
   },
   "appointment": {
-    "preferredDate": "next meeting date or null",
-    "preferredTime": "next meeting time or null",
-    "attendeeCount": numeric count or null
+    "preferredDate": "string or null",
+    "preferredTime": "string or null",
+    "attendeeCount": number or null
   }
-}
-
-Return ONLY the JSON object, no other text.`;
+}`;
 
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.1,
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
       max_tokens: 1500,
+      messages: [{ role: "user", content: prompt }],
     });
 
-    const content = response.choices[0]?.message?.content?.trim() || "{}";
+    const content = response.content[0]?.type === "text" ? response.content[0].text.trim() : "{}";
+    console.log(`[intake-parser] meeting raw AI response: ${content.substring(0, 300)}`);
 
     let jsonStr = content;
-    if (content.startsWith("```")) {
+    if (content.includes("```")) {
       jsonStr = content.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
     }
 
@@ -275,15 +279,12 @@ Return ONLY the JSON object, no other text.`;
     const cleanObject = (obj: any): any => {
       if (obj === null || obj === undefined) return undefined;
       if (typeof obj !== "object") return obj;
-
       const result: any = {};
       for (const [key, value] of Object.entries(obj)) {
         if (value !== null && value !== undefined) {
           if (typeof value === "object" && !Array.isArray(value)) {
             const cleaned = cleanObject(value);
-            if (Object.keys(cleaned).length > 0) {
-              result[key] = cleaned;
-            }
+            if (Object.keys(cleaned).length > 0) result[key] = cleaned;
           } else {
             result[key] = value;
           }
@@ -293,9 +294,11 @@ Return ONLY the JSON object, no other text.`;
     };
 
     const cleaned = cleanObject(parsed);
-    return validateIntakeData(cleaned);
-  } catch (error) {
-    console.error("Failed to parse meeting transcript:", error);
+    const validated = validateIntakeData(cleaned);
+    console.log(`[intake-parser] meeting extracted — deceasedName: ${validated.deceasedInfo?.fullName ?? "null"}, dod: ${validated.deceasedInfo?.dateOfDeath ?? "null"}, dob: ${validated.deceasedInfo?.dateOfBirth ?? "null"}, callerName: ${validated.callerInfo?.name ?? "null"}, relationship: ${validated.callerInfo?.relationship ?? "null"}, phone: ${validated.callerInfo?.phone ?? "null"}, location: ${validated.deceasedInfo?.currentLocation ?? "null"}, religion: ${validated.servicePreferences?.religion ?? "null"}, disposition: ${validated.servicePreferences?.burialOrCremation ?? "null"}, urgency: ${validated.servicePreferences?.urgency ?? "null"}`);
+    return validated;
+  } catch (error: any) {
+    console.error(`[intake-parser] parseMeetingTranscriptToIntake failed: ${error?.message || error}`);
     return {};
   }
 }
@@ -307,7 +310,6 @@ export function generateIntakeDocument(caseData: any, intakeData: IntakeData): s
   doc += `Case: ${caseData.deceasedName || "Unknown"}\n`;
   doc += `Last Updated: ${now}\n\n`;
 
-  // Deceased Information
   doc += `DECEASED INFORMATION\n`;
   if (intakeData.deceasedInfo) {
     const d = intakeData.deceasedInfo;
@@ -320,7 +322,6 @@ export function generateIntakeDocument(caseData: any, intakeData: IntakeData): s
   }
   doc += `\n`;
 
-  // Next of Kin / Caller Information
   doc += `NEXT OF KIN / PRIMARY CONTACT\n`;
   if (intakeData.callerInfo) {
     const c = intakeData.callerInfo;
@@ -331,7 +332,6 @@ export function generateIntakeDocument(caseData: any, intakeData: IntakeData): s
   }
   doc += `\n`;
 
-  // Service Preferences
   doc += `SERVICE PREFERENCES\n`;
   if (intakeData.servicePreferences) {
     const s = intakeData.servicePreferences;
@@ -351,7 +351,6 @@ export function generateIntakeDocument(caseData: any, intakeData: IntakeData): s
   }
   doc += `\n`;
 
-  // Appointment Info
   if (intakeData.appointment) {
     doc += `APPOINTMENT\n`;
     const a = intakeData.appointment;

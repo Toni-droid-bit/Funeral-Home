@@ -14,11 +14,12 @@ import { StatusBadge } from "@/components/status-badge";
 import { Search, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 
 export default function CasesList() {
   const { data: cases, isLoading } = useCases();
   const [search, setSearch] = useState("");
+  const [, navigate] = useLocation();
 
   const filteredCases = cases?.filter(c => 
     c.deceasedName.toLowerCase().includes(search.toLowerCase()) ||
@@ -72,11 +73,9 @@ export default function CasesList() {
                 </TableRow>
               ) : (
                 filteredCases?.map((c) => (
-                  <TableRow key={c.id} className="cursor-pointer hover:bg-muted/30 transition-colors">
+                  <TableRow key={c.id} className="cursor-pointer hover:bg-muted/30 transition-colors" onClick={() => navigate(`/cases/${c.id}`)}>
                     <TableCell className="font-medium text-primary">
-                      <Link href={`/cases/${c.id}`} className="hover:underline">
-                        {c.deceasedName}
-                      </Link>
+                      {c.deceasedName}
                     </TableCell>
                     <TableCell>
                       <StatusBadge status={c.status || "active"} />

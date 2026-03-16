@@ -355,7 +355,6 @@ export default function Communications() {
 
     setIsConnecting(true);
     setLiveTranscript("");
-    setMode("recording");
     lastExtractionRef.current = "";
 
     try {
@@ -536,6 +535,48 @@ export default function Communications() {
 
   // Recording mode
   if (mode === "recording") {
+    // Preparation screen — shown before getUserMedia is called
+    if (!isRecording && !isConnecting) {
+      return (
+        <div className="space-y-8">
+          <div className="flex items-center gap-4">
+            <Button variant="ghost" size="sm" onClick={resetToHub}>
+              <ArrowLeft className="w-4 h-4 mr-2" /> Back
+            </Button>
+            <div>
+              <h2 className="text-3xl font-display font-bold text-primary">New Meeting Recording</h2>
+              <p className="text-muted-foreground mt-1">
+                Case: {cases.find(c => c.id === parseInt(selectedCaseId))?.deceasedName || "No case selected"}
+              </p>
+            </div>
+          </div>
+
+          <Card className="max-w-md">
+            <CardContent className="p-8 text-center space-y-6">
+              <div className="w-24 h-24 mx-auto rounded-full bg-primary/10 flex items-center justify-center">
+                <Mic className="w-12 h-12 text-primary" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold mb-2">Ready to Record</h3>
+                <p className="text-sm text-muted-foreground">
+                  Click Start Recording to begin. Your browser will ask for microphone permission.
+                  Audio is streamed for transcription only and is not stored.
+                </p>
+              </div>
+              <Button
+                size="lg"
+                className="w-full gap-2 bg-red-600 hover:bg-red-700 text-white py-6"
+                onClick={handleStartRecording}
+                data-testid="button-start-recording"
+              >
+                <Mic className="w-5 h-5" /> Start Recording
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      );
+    }
+
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-4">
@@ -555,7 +596,7 @@ export default function Communications() {
           <Card>
             <CardContent className="p-6 text-center">
               <div className={`w-24 h-24 mx-auto rounded-full flex items-center justify-center mb-4 ${
-                isRecording ? "bg-red-100 dark:bg-red-900/30 animate-pulse" : 
+                isRecording ? "bg-red-100 dark:bg-red-900/30 animate-pulse" :
                 isConnecting ? "bg-amber-100 dark:bg-amber-900/30 animate-pulse" : "bg-muted"
               }`}>
                 {isConnecting ? (
@@ -564,7 +605,7 @@ export default function Communications() {
                   <Mic className={`w-12 h-12 ${isRecording ? "text-red-600" : "text-muted-foreground"}`} />
                 )}
               </div>
-              
+
               <div className="text-3xl font-mono mb-4">
                 {Math.floor(recordingTime / 60).toString().padStart(2, "0")}:
                 {(recordingTime % 60).toString().padStart(2, "0")}
@@ -594,9 +635,9 @@ export default function Communications() {
               </Button>
 
               <p className="text-sm text-muted-foreground mt-3">
-                {isConnecting 
-                  ? "Connecting..."
-                  : isRecording 
+                {isConnecting
+                  ? "Connecting to microphone..."
+                  : isRecording
                     ? "Recording in progress"
                     : "Initializing..."}
               </p>
@@ -1009,7 +1050,7 @@ export default function Communications() {
                       size="sm"
                       onClick={() => {
                         setSelectedCaseId(c.id.toString());
-                        handleStartRecording();
+                        setMode("recording");
                       }}
                       data-testid={`button-start-meeting-${c.id}`}
                     >
@@ -1044,7 +1085,17 @@ export default function Communications() {
                   ))}
                 </SelectContent>
               </Select>
-              <Button onClick={handleStartRecording} className="gap-2" data-testid="button-start-recording">
+              <Button
+                onClick={() => {
+                  if (!selectedCaseId) {
+                    toast({ title: "Select a case", description: "Please select a case before starting the recording", variant: "destructive" });
+                    return;
+                  }
+                  setMode("recording");
+                }}
+                className="gap-2"
+                data-testid="button-start-recording"
+              >
                 <Mic className="w-4 h-4" /> Record
               </Button>
             </div>

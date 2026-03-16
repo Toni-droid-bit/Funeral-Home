@@ -1,11 +1,12 @@
+import { useEffect, useRef } from "react";
 import { useCalls } from "@/hooks/use-calls";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { PlayCircle, FileText, Phone, PhoneOutgoing, FolderOpen, CheckCircle2, Link2 } from "lucide-react";
+import { PlayCircle, FileText, Phone, PhoneOutgoing, FolderOpen, CheckCircle2, Sparkles, Loader2, PhoneCall } from "lucide-react";
+import { MakeCallDialog } from "@/components/make-call-dialog";
 import { format } from "date-fns";
 import { StatusBadge } from "@/components/status-badge";
-import { MakeCallDialog } from "@/components/make-call-dialog";
 import {
   Dialog,
   DialogContent,
@@ -14,17 +15,52 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { Link } from "wouter";
+import { useToast } from "@/hooks/use-toast";
 
 export default function XLinkCalls() {
   const { data: calls, isLoading } = useCalls();
   const { data: cases } = useQuery<any[]>({ queryKey: ["/api/cases"] });
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const autoExtractedRef = useRef<Set<number>>(new Set());
 
   const getCaseForCall = (caseId: number | null) => {
     if (!caseId || !cases) return null;
     return cases.find(c => c.id === caseId);
   };
+
+  const reprocessMutation = useMutation({
+    mutationFn: async (callId: number) => {
+      return apiRequest("POST", `/api/calls/${callId}/reprocess`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/calls"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Extraction failed", description: err?.message || "Could not extract data from transcript", variant: "destructive" });
+    },
+  });
+
+  // Auto-extract on load for any call that has a transcript but whose case is still "Unknown (Pending)" or has no case
+  useEffect(() => {
+    if (!calls || isLoading) return;
+    const unprocessed = calls.filter(call => {
+      if (!call.transcript) return false;
+      if (autoExtractedRef.current.has(call.id)) return false;
+      const linkedCase = getCaseForCall(call.caseId);
+      // Run if no case linked, or case is still pending with no intake data
+      return !call.caseId || linkedCase?.deceasedName === "Unknown (Pending)";
+    });
+    for (const call of unprocessed) {
+      autoExtractedRef.current.add(call.id);
+      console.log(`[xlink] auto-extracting data for call ${call.id}`);
+      reprocessMutation.mutate(call.id);
+    }
+  }, [calls, isLoading, cases]);
 
   return (
     <div className="space-y-8">
@@ -33,7 +69,11 @@ export default function XLinkCalls() {
           <h2 className="text-3xl font-display font-bold text-primary" data-testid="text-page-title">xLink Call Logs</h2>
           <p className="text-muted-foreground mt-1">AI-handled reception calls, transcripts, and sentiment analysis.</p>
         </div>
-        <MakeCallDialog />
+        <MakeCallDialog trigger={
+          <Button className="gap-2" data-testid="button-make-call">
+            <PhoneCall className="w-4 h-4" /> Make a Call
+          </Button>
+        } />
       </div>
 
       <div className="space-y-4">
@@ -128,23 +168,40 @@ export default function XLinkCalls() {
                 {/* Actions */}
                 <div className="flex md:flex-col justify-end gap-2 min-w-[140px]">
                   {call.transcript && (
-                    <Dialog>
-                      <DialogTrigger asChild>
-                        <Button variant="outline" size="sm" className="w-full justify-start gap-2" data-testid={`button-transcript-${call.id}`}>
-                          <FileText className="w-4 h-4" /> Transcript
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent className="max-w-2xl max-h-[80vh]">
-                        <DialogHeader>
-                          <DialogTitle>Call Transcript</DialogTitle>
-                        </DialogHeader>
-                        <ScrollArea className="h-[60vh] pr-4">
-                          <div className="whitespace-pre-wrap text-sm text-muted-foreground">
-                            {call.transcript}
-                          </div>
-                        </ScrollArea>
-                      </DialogContent>
-                    </Dialog>
+                    <>
+                      <Dialog>
+                        <DialogTrigger asChild>
+                          <Button variant="outline" size="sm" className="w-full justify-start gap-2" data-testid={`button-transcript-${call.id}`}>
+                            <FileText className="w-4 h-4" /> Transcript
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent className="max-w-2xl max-h-[80vh]">
+                          <DialogHeader>
+                            <DialogTitle>Call Transcript</DialogTitle>
+                          </DialogHeader>
+                          <ScrollArea className="h-[60vh] pr-4">
+                            <div className="whitespace-pre-wrap text-sm text-muted-foreground">
+                              {call.transcript}
+                            </div>
+                          </ScrollArea>
+                        </DialogContent>
+                      </Dialog>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full justify-start gap-2 text-purple-700 border-purple-200 hover:bg-purple-50"
+                        onClick={() => reprocessMutation.mutate(call.id)}
+                        disabled={reprocessMutation.isPending}
+                        data-testid={`button-extract-${call.id}`}
+                      >
+                        {reprocessMutation.isPending && reprocessMutation.variables === call.id ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Sparkles className="w-4 h-4" />
+                        )}
+                        Extract Data
+                      </Button>
+                    </>
                   )}
                   {!call.transcript && (
                     <Button variant="outline" size="sm" className="w-full justify-start gap-2" disabled>
@@ -167,14 +224,6 @@ export default function XLinkCalls() {
             <Phone className="w-12 h-12 mx-auto text-muted-foreground/30 mb-4" />
             <h3 className="text-lg font-medium">No calls recorded yet</h3>
             <p className="text-muted-foreground mb-6">Calls handled by xLink AI will appear here.</p>
-            <MakeCallDialog 
-              trigger={
-                <Button className="bg-primary text-primary-foreground" data-testid="button-make-first-call">
-                  <Phone className="w-4 h-4 mr-2" />
-                  Make Your First Call
-                </Button>
-              }
-            />
           </div>
         )}
       </div>

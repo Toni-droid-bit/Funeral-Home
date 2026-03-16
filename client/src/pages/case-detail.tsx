@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useCase } from "@/hooks/use-cases";
 import { useParams } from "wouter";
 import { StatusBadge } from "@/components/status-badge";
@@ -6,6 +7,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Phone, Mic, FileText, ArrowLeft, Loader2, Calendar, CheckCircle2, ClipboardList } from "lucide-react";
 import { format } from "date-fns";
 import { Link } from "wouter";
@@ -48,6 +51,7 @@ export default function CaseDetail() {
   const caseId = Number(id);
   const { data: caseData, isLoading } = useCase(caseId) as { data: CaseWithRelations | null | undefined, isLoading: boolean };
   const { toast } = useToast();
+  const [transcriptDialog, setTranscriptDialog] = useState<{ open: boolean; content: string; director: string }>({ open: false, content: "", director: "" });
 
   const { data: calls = [] } = useQuery<Call[]>({
     queryKey: ["/api/cases", caseId, "calls"],
@@ -222,21 +226,19 @@ export default function CaseDetail() {
                         {checklist.completedCount}/{checklist.totalItems} complete
                       </span>
                     )}
-                    {checklist && checklist.completedPercentage === 100 && (
-                      <Button
-                        size="sm"
-                        onClick={() => generateSummaryMutation.mutate()}
-                        disabled={generateSummaryMutation.isPending}
-                        data-testid="button-generate-summary"
-                      >
-                        {generateSummaryMutation.isPending ? (
-                          <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                        ) : (
-                          <FileText className="w-4 h-4 mr-2" />
-                        )}
-                        Generate Summary
-                      </Button>
-                    )}
+                    <Button
+                      size="sm"
+                      onClick={() => generateSummaryMutation.mutate()}
+                      disabled={generateSummaryMutation.isPending}
+                      data-testid="button-generate-summary"
+                    >
+                      {generateSummaryMutation.isPending ? (
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      ) : (
+                        <FileText className="w-4 h-4 mr-2" />
+                      )}
+                      Generate Summary
+                    </Button>
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -353,8 +355,21 @@ export default function CaseDetail() {
                           {meeting.summary && (
                             <p className="text-sm text-muted-foreground">{meeting.summary}</p>
                           )}
-                          <div className="text-xs text-muted-foreground mt-2">
-                            {meeting.createdAt && format(new Date(meeting.createdAt), "MMM d, yyyy h:mm a")}
+                          <div className="flex items-center justify-between mt-2">
+                            <span className="text-xs text-muted-foreground">
+                              {meeting.createdAt && format(new Date(meeting.createdAt), "MMM d, yyyy h:mm a")}
+                            </span>
+                            {meeting.transcript && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 text-xs gap-1"
+                                onClick={() => setTranscriptDialog({ open: true, content: meeting.transcript!, director: meeting.directorName || "Unknown" })}
+                              >
+                                <FileText className="w-3 h-3" />
+                                View Full Transcript
+                              </Button>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -427,6 +442,19 @@ export default function CaseDetail() {
             </TabsContent>
           </Tabs>
         </div>
+
+        <Dialog open={transcriptDialog.open} onOpenChange={(open) => setTranscriptDialog(prev => ({ ...prev, open }))}>
+          <DialogContent className="max-w-2xl max-h-[80vh]">
+            <DialogHeader>
+              <DialogTitle>Meeting Transcript — {transcriptDialog.director}</DialogTitle>
+            </DialogHeader>
+            <ScrollArea className="h-[60vh] pr-4">
+              <div className="whitespace-pre-wrap text-sm text-muted-foreground leading-relaxed">
+                {transcriptDialog.content}
+              </div>
+            </ScrollArea>
+          </DialogContent>
+        </Dialog>
 
         <div className="space-y-6">
           <Card className="bg-primary/5 border-primary/10 shadow-sm">

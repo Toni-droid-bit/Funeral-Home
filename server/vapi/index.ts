@@ -144,99 +144,94 @@ export function registerVapiRoutes(app: Express) {
   });
 
   app.post("/api/vapi/webhook", async (req: Request, res: Response) => {
+    // Always respond 200 immediately so Vapi doesn't retry
+    res.status(200).json({ received: true });
+
+    const { message } = req.body;
+    if (!message?.type) return;
+
+    const msgType: string = message.type;
+    const vapiCallId: string | undefined = message?.call?.id;
+    const callType: string | undefined = message?.call?.type;
+    const customerNumber: string | undefined = message?.call?.customer?.number;
+    const customerName: string | undefined = message?.call?.customer?.name;
+    const isInbound = callType === "inboundPhoneCall" || callType === "webCall";
+
+    console.log(`[vapi] webhook ${msgType} | callId=${vapiCallId ?? "none"} | type=${callType ?? "?"}`);
+
+    // Helper: ensure a local call record exists for an inbound call
+    const ensureInboundCallRecord = async (): Promise<any | null> => {
+      if (!vapiCallId || !isInbound) return null;
+      try {
+        const existing = await storage.getCallByVapiId(vapiCallId);
+        if (existing) return existing;
+        const created = await storage.createCall({
+          vapiCallId,
+          callerPhone: customerNumber || "Unknown",
+          callerName: customerName || null,
+          caseId: null,
+          status: "in-progress",
+          direction: "inbound",
+          detectedLanguage: "English",
+          transcript: null,
+          summary: null,
+          sentiment: null,
+          audioUrl: null,
+        });
+        console.log(`[vapi] created call record for inbound call ${vapiCallId}`);
+        return created;
+      } catch (err) {
+        console.error(`[vapi] failed to create call record for ${vapiCallId}:`, err);
+        return null;
+      }
+    };
+
     try {
-      const { message } = req.body;
-      
-      console.log("Vapi webhook received:", message?.type);
-      
-      // Handle assistant started - create local call record for inbound calls
-      if (message?.type === "assistant-message" || message?.type === "conversation-update") {
-        const vapiCallId = message?.call?.id;
-        const callType = message?.call?.type;
-        const customerNumber = message?.call?.customer?.number;
-        const customerName = message?.call?.customer?.name;
-        
-        if (vapiCallId && (callType === "inboundPhoneCall" || callType === "webCall")) {
-          // Check if we already have a record for this call
-          const existingCall = await storage.getCallByVapiId(vapiCallId);
-          
-          if (!existingCall) {
-            // Create a new local call record for this inbound call
-            await storage.createCall({
-              vapiCallId: vapiCallId,
-              callerPhone: customerNumber || "Unknown",
-              callerName: customerName || null,
-              caseId: null,
-              status: "in-progress",
-              direction: "inbound",
-              detectedLanguage: "English",
-              transcript: null,
-              summary: null,
-              sentiment: null,
-              audioUrl: null,
-            });
-            console.log(`Created local call record for inbound Vapi call: ${vapiCallId}`);
+      // ── Early inbound call detection ──────────────────────────────────────
+      if (msgType === "assistant-message" || msgType === "conversation-update") {
+        await ensureInboundCallRecord();
+      }
+
+      if (msgType === "status-update") {
+        const status: string | undefined = message?.status;
+        if (status === "in-progress") {
+          await ensureInboundCallRecord();
+        }
+        if (status === "ended" && vapiCallId) {
+          try {
+            const localCall = await storage.getCallByVapiId(vapiCallId);
+            if (localCall?.status === "in-progress") {
+              await storage.updateCall(localCall.id, { status: "completed" });
+              console.log(`[vapi] marked call ${localCall.id} as completed`);
+            }
+          } catch (err) {
+            console.error(`[vapi] error updating status-ended for ${vapiCallId}:`, err);
           }
         }
       }
-      
-      // Handle status-update with "in-progress" to catch inbound calls early
-      if (message?.type === "status-update") {
-        const vapiCallId = message?.call?.id;
-        const status = message?.status;
-        const callType = message?.call?.type;
-        const customerNumber = message?.call?.customer?.number;
-        const customerName = message?.call?.customer?.name;
-        
-        // Create record for inbound calls when they start
-        if (vapiCallId && status === "in-progress" && (callType === "inboundPhoneCall" || callType === "webCall")) {
-          const existingCall = await storage.getCallByVapiId(vapiCallId);
-          
-          if (!existingCall) {
-            await storage.createCall({
-              vapiCallId: vapiCallId,
-              callerPhone: customerNumber || "Unknown",
-              callerName: customerName || null,
-              caseId: null,
-              status: "in-progress",
-              direction: "inbound",
-              detectedLanguage: "English",
-              transcript: null,
-              summary: null,
-              sentiment: null,
-              audioUrl: null,
-            });
-            console.log(`Created local call record for inbound Vapi call: ${vapiCallId}`);
-          }
-        }
-        
-        // Handle call ended status
-        if (vapiCallId && status === "ended") {
-          const localCall = await storage.getCallByVapiId(vapiCallId);
-          if (localCall && localCall.status === "in-progress") {
-            await storage.updateCall(localCall.id, {
-              status: "completed",
-            });
-          }
-        }
-      }
-      
-      if (message?.type === "end-of-call-report") {
+
+      // ── End-of-call report ────────────────────────────────────────────────
+      if (msgType === "end-of-call-report") {
         const { call, transcript, summary, recordingUrl } = message;
-        const vapiCallId = call?.id;
-        const customerNumber = call?.customer?.number;
-        const customerName = call?.customer?.name;
-        const callType = call?.type;
-        
-        if (vapiCallId) {
-          let localCall = await storage.getCallByVapiId(vapiCallId);
-          
-          // If no local call exists (e.g., inbound call we didn't catch earlier), create one
-          if (!localCall && (callType === "inboundPhoneCall" || callType === "webCall")) {
+        const eocCallId: string | undefined = call?.id;
+        const eocCallType: string | undefined = call?.type;
+        const eocPhone: string | undefined = call?.customer?.number;
+        const eocName: string | undefined = call?.customer?.name;
+        const eocIsInbound = eocCallType === "inboundPhoneCall" || eocCallType === "webCall";
+
+        if (!eocCallId) {
+          console.warn("[vapi] end-of-call-report missing call.id — skipping");
+          return;
+        }
+
+        let localCall: any = await storage.getCallByVapiId(eocCallId).catch(() => null);
+
+        if (!localCall && eocIsInbound) {
+          try {
             localCall = await storage.createCall({
-              vapiCallId: vapiCallId,
-              callerPhone: customerNumber || "Unknown",
-              callerName: customerName || null,
+              vapiCallId: eocCallId,
+              callerPhone: eocPhone || "Unknown",
+              callerName: eocName || null,
               caseId: null,
               status: "completed",
               direction: "inbound",
@@ -246,85 +241,126 @@ export function registerVapiRoutes(app: Express) {
               sentiment: null,
               audioUrl: recordingUrl || null,
             });
-            console.log(`Created and completed local call record for inbound Vapi call: ${vapiCallId}`);
-          } else if (localCall) {
+            console.log(`[vapi] created completed call record for ${eocCallId}`);
+          } catch (err) {
+            console.error(`[vapi] failed to create completed call record for ${eocCallId}:`, err);
+            return;
+          }
+        } else if (localCall) {
+          try {
             await storage.updateCall(localCall.id, {
               status: "completed",
               transcript: transcript || null,
               summary: summary || null,
               audioUrl: recordingUrl || null,
             });
-            console.log(`Updated call ${localCall.id} from Vapi webhook`);
-          } else {
-            console.log(`No local call found for Vapi call ID: ${vapiCallId}`);
+            // Refresh the local call object with updated transcript
+            localCall = { ...localCall, transcript, summary };
+            console.log(`[vapi] updated call ${localCall.id} with transcript and summary`);
+          } catch (err) {
+            console.error(`[vapi] failed to update call ${localCall.id}:`, err);
           }
-          
-          // Parse transcript to extract structured intake data and create/update case
-          if (localCall && transcript && (callType === "inboundPhoneCall" || callType === "webCall")) {
-            try {
-              console.log(`Parsing call transcript for intake data...`);
-              const intakeData = await parseCallTranscriptToIntake(transcript, summary || undefined);
-              const missingFields = calculateMissingFields(intakeData);
-              
-              // Check if call already linked to a case
-              if (localCall.caseId) {
-                // Update existing case with new intake data
-                const existingCase = await storage.getCase(localCall.caseId);
-                if (existingCase) {
-                  const mergedIntake = mergeIntakeData(
-                    (existingCase.intakeData as any) || {},
-                    intakeData
-                  );
-                  const newMissingFields = calculateMissingFields(mergedIntake);
-                  
-                  await storage.updateCase(localCall.caseId, {
-                    intakeData: mergedIntake,
-                    missingFields: newMissingFields,
-                  });
-                  console.log(`Updated case ${localCall.caseId} with intake data from call`);
-                }
-              } else {
-                // Create new case from intake data
-                const deceasedName = intakeData.deceasedInfo?.fullName || "Unknown (Pending)";
-                const religion = intakeData.servicePreferences?.religion || "Unknown";
-                const language = "English"; // Could detect from transcript
-                
-                // Get default funeral home
-                const homes = await storage.getFuneralHomes();
-                const defaultHomeId = homes[0]?.id || null;
-                
-                const newCase = await storage.createCase({
-                  deceasedName,
-                  dateOfDeath: intakeData.deceasedInfo?.dateOfDeath 
-                    ? new Date(intakeData.deceasedInfo.dateOfDeath) 
-                    : null,
-                  status: "active",
-                  religion,
-                  language,
-                  funeralHomeId: defaultHomeId,
-                  notes: `Auto-created from xLink call. Caller: ${intakeData.callerInfo?.name || customerName || "Unknown"} (${intakeData.callerInfo?.relationship || "Unknown relationship"})`,
-                  intakeData,
-                  missingFields,
-                });
-                
-                // Link call to the new case
-                await storage.updateCall(localCall.id, {
-                  caseId: newCase.id,
-                });
-                
-                console.log(`Created new case ${newCase.id} from call intake data`);
+        } else {
+          console.warn(`[vapi] no local call found for Vapi call ${eocCallId} (type=${eocCallType}) — skipping case creation`);
+          return;
+        }
+
+        // ── Parse transcript & auto-create/update case ────────────────────
+        const effectiveTranscript: string | null = transcript || localCall.transcript;
+        if (!effectiveTranscript) {
+          console.log(`[vapi] no transcript available for call ${localCall.id} — skipping intake parsing`);
+          return;
+        }
+
+        try {
+          console.log(`[vapi] parsing transcript for call ${localCall.id} (${effectiveTranscript.length} chars)…`);
+          const intakeData = await parseCallTranscriptToIntake(effectiveTranscript, summary || undefined);
+          const missingFields = calculateMissingFields(intakeData);
+
+          // Merge Vapi metadata name as fallback
+          const extractedCallerName = intakeData.callerInfo?.name || eocName || customerName || null;
+          if (extractedCallerName && !intakeData.callerInfo?.name) {
+            intakeData.callerInfo = { ...(intakeData.callerInfo || {}), name: extractedCallerName };
+          }
+
+          // Update the call record's callerName if we extracted one and it was unknown before
+          if (extractedCallerName && (!localCall.callerName || localCall.callerName === "Unknown")) {
+            await storage.updateCall(localCall.id, { callerName: extractedCallerName }).catch(() => {});
+          }
+
+          if (localCall.caseId) {
+            // ── Update existing linked case ──────────────────────────────
+            const existingCase = await storage.getCase(localCall.caseId).catch(() => null);
+            if (existingCase) {
+              const mergedIntake = mergeIntakeData((existingCase.intakeData as any) || {}, intakeData);
+              const newMissing = calculateMissingFields(mergedIntake);
+              const updates: any = { intakeData: mergedIntake, missingFields: newMissing };
+
+              // Always promote a real name over "Unknown (Pending)"
+              if (intakeData.deceasedInfo?.fullName &&
+                (existingCase.deceasedName === "Unknown (Pending)" || !existingCase.deceasedName)) {
+                updates.deceasedName = intakeData.deceasedInfo.fullName;
+                console.log(`[vapi] updating case ${localCall.caseId} name → "${intakeData.deceasedInfo.fullName}"`);
               }
-            } catch (parseError) {
-              console.error("Failed to parse call intake:", parseError);
+              if (intakeData.servicePreferences?.religion &&
+                (existingCase.religion === "Unknown" || !existingCase.religion)) {
+                updates.religion = intakeData.servicePreferences.religion;
+              }
+
+              await storage.updateCase(localCall.caseId, updates);
+              console.log(`[vapi] updated case ${localCall.caseId} — ${newMissing.length} fields still missing`);
+            }
+          } else {
+            // ── Auto-create case from call ────────────────────────────────
+            const deceasedName = intakeData.deceasedInfo?.fullName || "Unknown (Pending)";
+            const religion = intakeData.servicePreferences?.religion || "Unknown";
+            const homes = await storage.getFuneralHomes().catch(() => []);
+            const defaultHomeId = (homes as any[])[0]?.id || null;
+
+            const newCase = await storage.createCase({
+              deceasedName,
+              dateOfDeath: intakeData.deceasedInfo?.dateOfDeath
+                ? new Date(intakeData.deceasedInfo.dateOfDeath)
+                : null,
+              status: "active",
+              religion,
+              language: "English",
+              funeralHomeId: defaultHomeId,
+              notes: `Auto-created from xLink call. Caller: ${extractedCallerName || "Unknown"} (${intakeData.callerInfo?.relationship || "Unknown relationship"})`,
+              intakeData,
+              missingFields,
+            });
+
+            await storage.updateCall(localCall.id, { caseId: newCase.id });
+            console.log(`[vapi] created case ${newCase.id} ("${deceasedName}") linked to call ${localCall.id} — ${missingFields.length} fields missing`);
+          }
+        } catch (parseErr: any) {
+          console.error(`[vapi] intake parsing failed for call ${localCall.id}: ${parseErr?.message || parseErr}`);
+          // Still create a stub case so the call isn't left orphaned
+          if (!localCall.caseId) {
+            try {
+              const homes = await storage.getFuneralHomes().catch(() => []);
+              const defaultHomeId = (homes as any[])[0]?.id || null;
+              const stubCase = await storage.createCase({
+                deceasedName: "Unknown (Pending)",
+                status: "active",
+                religion: "Unknown",
+                language: "English",
+                funeralHomeId: defaultHomeId,
+                notes: `Auto-created from xLink call — intake parsing failed. Caller phone: ${eocPhone || "Unknown"}`,
+                intakeData: {},
+                missingFields: [],
+              });
+              await storage.updateCall(localCall.id, { caseId: stubCase.id });
+              console.log(`[vapi] created stub case ${stubCase.id} after parse failure`);
+            } catch (stubErr: any) {
+              console.error(`[vapi] failed to create stub case: ${stubErr?.message}`);
             }
           }
         }
       }
-      
-      res.status(200).json({ received: true });
-    } catch (error: any) {
-      console.error("Webhook error:", error);
-      res.status(500).json({ message: "Webhook processing error" });
+    } catch (err: any) {
+      console.error(`[vapi] unhandled error processing ${msgType}:`, err?.message || err);
     }
   });
 }
