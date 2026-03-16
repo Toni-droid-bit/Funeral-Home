@@ -222,19 +222,37 @@ export default function XScribeMeetings() {
     queryClient.invalidateQueries({ queryKey: ["/api/cases", selectedCaseId, "checklist"] });
   };
 
+  // Keep a ref to the latest transcript so the polling interval doesn't reset on every
+  // new word (which would prevent it from ever firing during active speech).
+  const fullTranscriptRef = useRef("");
+  useEffect(() => {
+    fullTranscriptRef.current = fullTranscript;
+  }, [fullTranscript]);
+
+  // Track in-flight state via ref to avoid stale closures inside the interval.
+  const isProcessingRef = useRef(false);
+
   // Process transcript in real-time to update checklist
   const processTranscriptMutation = useMutation({
     mutationFn: async (transcript: string) => {
+      console.log(`[xscribe] processTranscriptMutation firing — caseId=${selectedCaseId} transcript length=${transcript.length}`);
       return apiRequest("POST", `/api/cases/${selectedCaseId}/process-transcript`, {
         transcript
       });
     },
     onSuccess: () => {
-      // Refresh checklist after processing
+      console.log(`[xscribe] processTranscriptMutation succeeded — invalidating checklist`);
+      // Invalidate both the checklist and the case so intakeData values refresh
+      queryClient.invalidateQueries({ queryKey: ["/api/cases", selectedCaseId, "checklist"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
       refetchChecklist();
+      isProcessingRef.current = false;
+      setIsProcessingTranscript(false);
     },
     onError: (error: any) => {
-      console.error("Failed to process transcript:", error);
+      console.error("[xscribe] processTranscriptMutation failed:", error);
+      isProcessingRef.current = false;
+      setIsProcessingTranscript(false);
     },
   });
 
@@ -254,20 +272,26 @@ export default function XScribeMeetings() {
     },
   });
 
-  // Auto-process transcript every 5 seconds during recording — skip if already in-flight
+  // Auto-process transcript every 5 seconds during recording.
+  // IMPORTANT: fullTranscript is read via ref so this interval is stable and does NOT
+  // reset on every new word spoken (which would prevent it ever firing).
   useEffect(() => {
-    if (mode === "recording" && selectedCaseId && fullTranscript && fullTranscript.length > 50) {
-      const interval = setInterval(() => {
-        if (!processTranscriptMutation.isPending) {
-          setIsProcessingTranscript(true);
-          processTranscriptMutation.mutate(fullTranscript);
-          setTimeout(() => setIsProcessingTranscript(false), 1500);
-        }
-      }, 5000); // Every 5 seconds
+    if (mode !== "recording" || !selectedCaseId) return;
 
-      return () => clearInterval(interval);
-    }
-  }, [mode, selectedCaseId, fullTranscript]);
+    const interval = setInterval(() => {
+      const transcript = fullTranscriptRef.current;
+      if (transcript && transcript.length > 50 && !isProcessingRef.current) {
+        console.log(`[xscribe] polling tick — scheduling process-transcript (${transcript.length} chars)`);
+        isProcessingRef.current = true;
+        setIsProcessingTranscript(true);
+        processTranscriptMutation.mutate(transcript);
+      } else {
+        console.log(`[xscribe] polling tick — skipped (length=${transcript?.length ?? 0} inFlight=${isProcessingRef.current})`);
+      }
+    }, 5000); // Every 5 seconds — stable interval, not reset by new words
+
+    return () => clearInterval(interval);
+  }, [mode, selectedCaseId]); // NOT fullTranscript — use ref above
 
   // Patch case intake data (for editable fields in list mode)
   const patchCaseMutation = useMutation({

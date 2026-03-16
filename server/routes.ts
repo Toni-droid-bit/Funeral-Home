@@ -239,7 +239,10 @@ export async function registerRoutes(
       const caseId = Number(req.params.id);
       const { transcript } = req.body;
 
+      console.log(`[process-transcript] CALLED — caseId=${caseId} transcript.length=${transcript?.length ?? 0}`);
+
       if (!transcript || transcript.trim().length < 50) {
+        console.log(`[process-transcript] rejected — transcript too short (${transcript?.length ?? 0} chars)`);
         return res.status(400).json({ error: "Transcript too short to process" });
       }
 
@@ -250,6 +253,7 @@ export async function registerRoutes(
 
       // Use the existing intake parser which returns properly structured data
       const extractedIntake = await parseMeetingTranscriptToIntake(transcript);
+      console.log(`[process-transcript] AI raw result — keys: ${Object.keys(extractedIntake).join(', ')}`, JSON.stringify(extractedIntake, null, 2));
 
       if (Object.keys(extractedIntake).length === 0) {
         return res.json({

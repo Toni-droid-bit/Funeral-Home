@@ -375,9 +375,12 @@ Return ONLY a valid JSON object with this exact structure. Use null for any fiel
     });
 
     const content = response.content[0]?.type === "text" ? response.content[0].text.trim() : "{}";
+    console.log(`[intake-parser] raw Anthropic response (first 500 chars): ${content.substring(0, 500)}`);
     let jsonStr = content.includes("```") ? content.replace(/```json?\n?/g, "").replace(/```/g, "").trim() : content;
     const parsed = JSON.parse(jsonStr);
-    const validated = validateIntakeData(cleanObject(parsed));
+    const cleaned = cleanObject(parsed);
+    const validated = validateIntakeData(cleaned);
+    console.log(`[intake-parser] after cleanObject — non-null fields: ${JSON.stringify(cleaned).substring(0, 300)}`);
     console.log(`[intake-parser] meeting extracted — deceased: ${validated.deceasedInfo?.fullName ?? "null"}, dod: ${validated.deceasedInfo?.dateOfDeath ?? "null"}, disposition: ${validated.funeralService?.dispositionType ?? "null"}, religion: ${validated.deceasedInfo?.religion ?? "null"}, funeralType: ${validated.deceasedInfo?.funeralType ?? "null"}`);
     return validated;
   } catch (error: any) {
