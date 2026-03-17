@@ -1,7 +1,7 @@
 import { VapiClient } from "@vapi-ai/server-sdk";
 import type { Express, Request, Response } from "express";
 import { storage } from "../storage";
-import { parseCallTranscriptToIntake, calculateMissingFields, mergeIntakeData } from "../intake-parser";
+import { parseCallTranscriptToIntake, calculateMissingFields, mergeIntakeData, filterManualOverrides } from "../intake-parser";
 import { findMatchingCase, applyIntakeToExistingCase } from "../case-matcher";
 
 const VAPI_API_KEY = process.env.VAPI_API_KEY || "";
@@ -327,7 +327,11 @@ export function registerVapiRoutes(app: Express) {
             // ── Update existing linked case ──────────────────────────────
             const existingCase = await storage.getCase(localCall.caseId).catch(() => null);
             if (existingCase) {
-              const mergedIntake = mergeIntakeData((existingCase.intakeData as any) || {}, intakeData);
+              const existingRaw = (existingCase.intakeData as any) || {};
+              const manualFields: Record<string, boolean> = existingRaw._manualFields || {};
+              const filteredIntake = filterManualOverrides(intakeData, manualFields);
+              const mergedIntake = mergeIntakeData(existingRaw, filteredIntake);
+              (mergedIntake as any)._manualFields = manualFields;
               const newMissing = calculateMissingFields(mergedIntake);
               const updates: any = { intakeData: mergedIntake, missingFields: newMissing };
 
