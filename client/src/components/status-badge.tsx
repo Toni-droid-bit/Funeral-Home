@@ -14,16 +14,19 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
   const getStyles = (s: string) => {
     switch (s.toLowerCase()) {
       case "active":
+        // Incomplete case — needs attention
+        return "bg-red-100 text-red-700 border-red-200";
       case "completed":
+      case "closed":
+      case "missed":
+        // Done / neutral
+        return "bg-slate-100 text-slate-700 border-slate-200";
       case "final":
         return "bg-green-100 text-green-700 border-green-200";
       case "pending":
       case "processing":
       case "draft":
         return "bg-amber-100 text-amber-700 border-amber-200";
-      case "closed":
-      case "missed":
-        return "bg-slate-100 text-slate-700 border-slate-200";
       case "in-progress":
       case "recording":
         return "bg-blue-100 text-blue-700 border-blue-200";

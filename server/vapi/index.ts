@@ -4,20 +4,33 @@ import { storage } from "../storage";
 import { parseCallTranscriptToIntake, calculateMissingFields, mergeIntakeData } from "../intake-parser";
 import { findMatchingCase, applyIntakeToExistingCase } from "../case-matcher";
 
+const VAPI_API_KEY = process.env.VAPI_API_KEY || "";
+if (!VAPI_API_KEY) {
+  console.error("[vapi] WARNING: VAPI_API_KEY is not set — outbound calls and phone number listing will fail");
+} else {
+  console.log(`[vapi] VAPI_API_KEY loaded (${VAPI_API_KEY.slice(0, 8)}...)`);
+}
+
 const vapiClient = new VapiClient({
-  token: process.env.VAPI_API_KEY || "",
+  token: VAPI_API_KEY,
 });
 
 export function registerVapiRoutes(app: Express) {
+  // Log the expected webhook URL on startup so it's easy to copy into the VAPI dashboard
+  const renderUrl = process.env.RENDER_EXTERNAL_URL || "https://xfunerals-demo.onrender.com";
+  console.log(`[vapi] Expected webhook URL (set this in VAPI dashboard): ${renderUrl}/api/vapi/webhook`);
+
   app.get("/api/vapi/phone-numbers", async (_req: Request, res: Response) => {
     try {
+      console.log("[vapi] Fetching phone numbers from VAPI…");
       const phoneNumbers = await vapiClient.phoneNumbers.list();
+      console.log(`[vapi] Phone numbers fetched: ${(phoneNumbers as any[]).length} number(s)`);
       res.json(phoneNumbers);
     } catch (error: any) {
-      console.error("Error fetching phone numbers:", error);
-      res.status(500).json({ 
+      console.error("[vapi] Error fetching phone numbers:", error?.message || error);
+      res.status(500).json({
         message: "Failed to fetch phone numbers",
-        error: error.message 
+        error: error.message || String(error)
       });
     }
   });
@@ -37,18 +50,25 @@ export function registerVapiRoutes(app: Express) {
 
   app.post("/api/vapi/calls", async (req: Request, res: Response) => {
     try {
-      const { 
-        phoneNumberId, 
-        assistantId, 
-        customerNumber, 
+      const {
+        phoneNumberId,
+        assistantId,
+        customerNumber,
         customerName,
         caseId,
-        firstMessage 
+        firstMessage
       } = req.body;
 
+      console.log(`[vapi] POST /api/vapi/calls — phoneNumberId=${phoneNumberId} customerNumber=${customerNumber} assistantId=${assistantId || "default"}`);
+
+      if (!VAPI_API_KEY) {
+        return res.status(500).json({ message: "VAPI_API_KEY is not configured on the server" });
+      }
+
       if (!phoneNumberId || !customerNumber) {
-        return res.status(400).json({ 
-          message: "Phone number ID and customer number are required" 
+        console.error("[vapi] Missing required fields:", { phoneNumberId, customerNumber });
+        return res.status(400).json({
+          message: "Phone number ID and customer number are required"
         });
       }
 
@@ -88,7 +108,9 @@ export function registerVapiRoutes(app: Express) {
         };
       }
 
+      console.log(`[vapi] Calling vapiClient.calls.create with config:`, JSON.stringify({ phoneNumberId: callConfig.phoneNumberId, customerNumber: callConfig.customer?.number, hasAssistantId: !!callConfig.assistantId }, null, 2));
       const vapiCall = await vapiClient.calls.create(callConfig) as any;
+      console.log(`[vapi] vapiClient.calls.create succeeded — vapiCallId=${vapiCall.id}`);
 
       const newCall = await storage.createCall({
         vapiCallId: vapiCall.id,
@@ -109,10 +131,11 @@ export function registerVapiRoutes(app: Express) {
         localCall: newCall,
       });
     } catch (error: any) {
-      console.error("Error creating call:", error);
-      res.status(500).json({ 
+      console.error("[vapi] Error creating call:", error?.message || error);
+      console.error("[vapi] Full error:", JSON.stringify(error, null, 2));
+      res.status(500).json({
         message: "Failed to create call",
-        error: error.message 
+        error: error.message || String(error)
       });
     }
   });
@@ -149,7 +172,14 @@ export function registerVapiRoutes(app: Express) {
     res.status(200).json({ received: true });
 
     const { message } = req.body;
-    if (!message?.type) return;
+
+    // Log raw payload for debugging (truncated)
+    console.log(`[vapi] webhook received — body keys: ${Object.keys(req.body).join(', ')}, message type: ${message?.type ?? "NONE"}`);
+
+    if (!message?.type) {
+      console.warn("[vapi] webhook received with no message.type — ignoring. Full body:", JSON.stringify(req.body).slice(0, 500));
+      return;
+    }
 
     const msgType: string = message.type;
     const vapiCallId: string | undefined = message?.call?.id;
@@ -158,7 +188,7 @@ export function registerVapiRoutes(app: Express) {
     const customerName: string | undefined = message?.call?.customer?.name;
     const isInbound = callType === "inboundPhoneCall" || callType === "webCall";
 
-    console.log(`[vapi] webhook ${msgType} | callId=${vapiCallId ?? "none"} | type=${callType ?? "?"}`);
+    console.log(`[vapi] webhook ${msgType} | callId=${vapiCallId ?? "none"} | type=${callType ?? "?"} | isInbound=${isInbound} | customerNumber=${customerNumber ?? "none"}`);;
 
     // Helper: ensure a local call record exists for an inbound call
     const ensureInboundCallRecord = async (): Promise<any | null> => {
@@ -219,6 +249,8 @@ export function registerVapiRoutes(app: Express) {
         const eocPhone: string | undefined = call?.customer?.number;
         const eocName: string | undefined = call?.customer?.name;
         const eocIsInbound = eocCallType === "inboundPhoneCall" || eocCallType === "webCall";
+
+        console.log(`[vapi] end-of-call-report | callId=${eocCallId ?? "MISSING"} | type=${eocCallType ?? "?"} | isInbound=${eocIsInbound} | hasTranscript=${!!transcript} | transcriptLength=${transcript?.length ?? 0}`);
 
         if (!eocCallId) {
           console.warn("[vapi] end-of-call-report missing call.id — skipping");

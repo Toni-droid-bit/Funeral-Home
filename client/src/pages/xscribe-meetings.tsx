@@ -242,9 +242,10 @@ export default function XScribeMeetings() {
     },
     onSuccess: () => {
       console.log(`[xscribe] processTranscriptMutation succeeded — invalidating checklist`);
-      // Invalidate both the checklist and the case so intakeData values refresh
+      // Invalidate checklist, cases list, and individual case so name updates everywhere
       queryClient.invalidateQueries({ queryKey: ["/api/cases", selectedCaseId, "checklist"] });
       queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", Number(selectedCaseId)] });
       refetchChecklist();
       isProcessingRef.current = false;
       setIsProcessingTranscript(false);
@@ -963,8 +964,13 @@ export default function XScribeMeetings() {
 
                 {/* Only show critical + important items during recording to keep it focused */}
                 <div className="space-y-1.5 overflow-y-auto flex-1">
-                  {computedChecklist.items
+                  {[...computedChecklist.items]
                     .filter(item => item.category !== "supplementary")
+                    .sort((a, b) => {
+                      // Incomplete items float to top, completed sink to bottom
+                      if (a.isCompleted === b.isCompleted) return 0;
+                      return a.isCompleted ? 1 : -1;
+                    })
                     .map(item => {
                     const isCriticalMissing = item.category === "critical" && !item.isCompleted;
                     return (

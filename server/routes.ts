@@ -6,7 +6,7 @@ import { api } from "@shared/routes";
 import { setupAuth, registerAuthRoutes } from "./auth";
 import { registerVapiRoutes } from "./vapi";
 import { setupDeepgramWebSocket } from "./deepgram";
-import { getFieldLabel, calculateMissingFields, validateIntakeData, parseCallTranscriptToIntake, parseMeetingTranscriptToIntake, mergeIntakeData, generateIntakeDocument } from "./intake-parser";
+import { getFieldLabel, calculateMissingFields, validateIntakeData, parseCallTranscriptToIntake, parseMeetingTranscriptToIntake, mergeIntakeData, filterManualOverrides, generateIntakeDocument } from "./intake-parser";
 import { IntakeData, REQUIRED_INTAKE_FIELDS, intakeDataSchema, checklistTemplateItemsSchema, type ChecklistItem } from "@shared/schema";
 import { findMatchingCase, applyIntakeToExistingCase } from "./case-matcher";
 
@@ -263,9 +263,13 @@ export async function registerRoutes(
         });
       }
 
-      // Merge with existing intake data
-      const currentIntakeData = (caseData.intakeData as IntakeData) || {};
-      const mergedIntakeData = mergeIntakeData(currentIntakeData, extractedIntake);
+      // Merge with existing intake data — skip fields already manually set by the director
+      const currentIntakeData = (caseData.intakeData as any) || {};
+      const manualFields: Record<string, boolean> = currentIntakeData._manualFields || {};
+      const filteredExtracted = filterManualOverrides(extractedIntake, manualFields);
+      const mergedIntakeData = mergeIntakeData(currentIntakeData as IntakeData, filteredExtracted);
+      // Preserve _manualFields through the merge
+      (mergedIntakeData as any)._manualFields = manualFields;
       const missingFields = calculateMissingFields(mergedIntakeData);
 
       // Update case
@@ -274,10 +278,14 @@ export async function registerRoutes(
         missingFields,
       };
 
-      // Update deceased name if extracted and current is placeholder
-      if (extractedIntake.deceasedInfo?.fullName &&
-        (caseData.deceasedName === "Unknown (Pending)" || !caseData.deceasedName)) {
+      // Update deceased name if extracted and current is a placeholder
+      const isPlaceholderName = !caseData.deceasedName ||
+        caseData.deceasedName === "Unknown (Pending)" ||
+        caseData.deceasedName === "New Case" ||
+        caseData.deceasedName.toLowerCase().startsWith("unknown");
+      if (extractedIntake.deceasedInfo?.fullName && isPlaceholderName) {
         updates.deceasedName = extractedIntake.deceasedInfo.fullName;
+        console.log(`[process-transcript] updating case ${caseId} name → "${extractedIntake.deceasedInfo.fullName}"`);
       }
 
       // Update religion from new or legacy field
@@ -340,7 +348,7 @@ export async function registerRoutes(
       if (item.fieldMapping) {
         // Save value directly to intakeData via the fieldMapping path (e.g. "deceasedInfo.fullName")
         const parts = item.fieldMapping.split('.');
-        const existingIntake = (caseData.intakeData as IntakeData) || {};
+        const existingIntake = (caseData.intakeData as any) || {};
         // Build a nested fragment matching the path (works for 1-part top-level fields too)
         const fragment: any = {};
         let cursor = fragment;
@@ -349,10 +357,13 @@ export async function registerRoutes(
           cursor = cursor[parts[i]];
         }
         cursor[parts[parts.length - 1]] = value;
-        const merged = mergeIntakeData(existingIntake, validateIntakeData(fragment));
+        const merged = mergeIntakeData(existingIntake as IntakeData, validateIntakeData(fragment));
+        // Track this field as manually set so AI never overwrites it
+        const existingManual: Record<string, boolean> = existingIntake._manualFields || {};
+        (merged as any)._manualFields = { ...existingManual, [item.fieldMapping]: true };
         updates.intakeData = merged;
         updates.missingFields = calculateMissingFields(merged);
-        console.log(`[update-value] case=${caseId} item=${itemId} path=${item.fieldMapping} value="${value}" → merged keys: ${Object.keys(merged).join(', ')}`);
+        console.log(`[update-value] case=${caseId} item=${itemId} path=${item.fieldMapping} value="${value}" → manual override stored`);
       } else {
         // Custom item (no fieldMapping) — auto-check when a value is typed
         const completedItems = (caseData.checklistCompletedItems as string[]) || [];
@@ -468,12 +479,19 @@ export async function registerRoutes(
         console.log(`[PATCH /api/calls/${callId}] re-parsed transcript, extracted intakeData:`, JSON.stringify(intakeData, null, 2));
         const existingCase = await storage.getCase(call.caseId);
         if (existingCase) {
-          const mergedIntake = mergeIntakeData((existingCase.intakeData as IntakeData) || {}, intakeData);
+          const patchCallRaw = (existingCase.intakeData as any) || {};
+          const patchCallManual: Record<string, boolean> = patchCallRaw._manualFields || {};
+          const patchCallFiltered = filterManualOverrides(intakeData, patchCallManual);
+          const mergedIntake = mergeIntakeData(patchCallRaw as IntakeData, patchCallFiltered);
+          (mergedIntake as any)._manualFields = patchCallManual;
           const missingFields = calculateMissingFields(mergedIntake);
           const caseUpdates: any = { intakeData: mergedIntake, missingFields };
 
-          if (intakeData.deceasedInfo?.fullName &&
-            (existingCase.deceasedName === "Unknown (Pending)" || !existingCase.deceasedName)) {
+          const isPatchCallPlaceholder = !existingCase.deceasedName ||
+            existingCase.deceasedName === "Unknown (Pending)" ||
+            existingCase.deceasedName === "New Case" ||
+            existingCase.deceasedName.toLowerCase().startsWith("unknown");
+          if (intakeData.deceasedInfo?.fullName && isPatchCallPlaceholder) {
             caseUpdates.deceasedName = intakeData.deceasedInfo.fullName;
           }
           if (intakeData.servicePreferences?.religion &&
@@ -542,7 +560,11 @@ export async function registerRoutes(
         );
         const existingCase = await storage.getCase(meeting.caseId);
         if (existingCase) {
-          const mergedIntake = mergeIntakeData((existingCase.intakeData as IntakeData) || {}, intakeData);
+          const patchExistingRaw = (existingCase.intakeData as any) || {};
+          const patchManualFields: Record<string, boolean> = patchExistingRaw._manualFields || {};
+          const patchFiltered = filterManualOverrides(intakeData, patchManualFields);
+          const mergedIntake = mergeIntakeData(patchExistingRaw as IntakeData, patchFiltered);
+          (mergedIntake as any)._manualFields = patchManualFields;
           const missingFields = calculateMissingFields(mergedIntake);
           const caseUpdates: any = { intakeData: mergedIntake, missingFields };
 
@@ -630,21 +652,24 @@ export async function registerRoutes(
         // Update existing case with new intake data
         const existingCase = await storage.getCase(call.caseId);
         if (existingCase) {
-          const mergedIntake = mergeIntakeData(
-            (existingCase.intakeData as IntakeData) || {},
-            intakeData
-          );
+          const callExistingRaw = (existingCase.intakeData as any) || {};
+          const callManualFields: Record<string, boolean> = callExistingRaw._manualFields || {};
+          const callFiltered = filterManualOverrides(intakeData, callManualFields);
+          const mergedIntake = mergeIntakeData(callExistingRaw as IntakeData, callFiltered);
+          (mergedIntake as any)._manualFields = callManualFields;
           const newMissingFields = calculateMissingFields(mergedIntake);
 
-          // Update case name if we extracted a better name
           const updates: any = {
             intakeData: mergedIntake,
             missingFields: newMissingFields,
           };
 
           // Update deceased name if extracted and current is placeholder
-          if (intakeData.deceasedInfo?.fullName &&
-            (existingCase.deceasedName === "Unknown (Pending)" || !existingCase.deceasedName)) {
+          const isCallPlaceholder = !existingCase.deceasedName ||
+            existingCase.deceasedName === "Unknown (Pending)" ||
+            existingCase.deceasedName === "New Case" ||
+            existingCase.deceasedName.toLowerCase().startsWith("unknown");
+          if (intakeData.deceasedInfo?.fullName && isCallPlaceholder) {
             updates.deceasedName = intakeData.deceasedInfo.fullName;
           }
 
@@ -776,10 +801,11 @@ export async function registerRoutes(
         // Update existing case with new intake data
         const existingCase = await storage.getCase(meeting.caseId);
         if (existingCase) {
-          const mergedIntake = mergeIntakeData(
-            (existingCase.intakeData as IntakeData) || {},
-            intakeData
-          );
+          const existingIntakeRaw = (existingCase.intakeData as any) || {};
+          const meetingManualFields: Record<string, boolean> = existingIntakeRaw._manualFields || {};
+          const meetingFiltered = filterManualOverrides(intakeData, meetingManualFields);
+          const mergedIntake = mergeIntakeData(existingIntakeRaw as IntakeData, meetingFiltered);
+          (mergedIntake as any)._manualFields = meetingManualFields;
           const newMissingFields = calculateMissingFields(mergedIntake);
 
           const updates: any = {
@@ -905,9 +931,13 @@ export async function registerRoutes(
       // Parse the live transcript
       const intakeData = await parseMeetingTranscriptToIntake(transcript);
       
-      // Merge with existing intake data
-      const existingIntake = (caseItem.intakeData as IntakeData) || {};
-      const mergedIntake = mergeIntakeData(existingIntake, intakeData);
+      // Merge with existing intake data — skip fields already manually set by the director
+      const existingIntake = (caseItem.intakeData as any) || {};
+      const liveManualFields: Record<string, boolean> = existingIntake._manualFields || {};
+      const liveFiltered = filterManualOverrides(intakeData, liveManualFields);
+      const mergedIntake = mergeIntakeData(existingIntake as IntakeData, liveFiltered);
+      // Preserve _manualFields
+      (mergedIntake as any)._manualFields = liveManualFields;
       const newMissingFields = calculateMissingFields(mergedIntake);
 
       const updates: any = {
@@ -915,9 +945,12 @@ export async function registerRoutes(
         missingFields: newMissingFields,
       };
 
-      // Update deceased name if extracted and current is placeholder
-      if (intakeData.deceasedInfo?.fullName &&
-        (caseItem.deceasedName === "Unknown (Pending)" || !caseItem.deceasedName)) {
+      // Update deceased name if extracted and current is a placeholder
+      const isLivePlaceholder = !caseItem.deceasedName ||
+        caseItem.deceasedName === "Unknown (Pending)" ||
+        caseItem.deceasedName === "New Case" ||
+        caseItem.deceasedName.toLowerCase().startsWith("unknown");
+      if (intakeData.deceasedInfo?.fullName && isLivePlaceholder) {
         updates.deceasedName = intakeData.deceasedInfo.fullName;
       }
 

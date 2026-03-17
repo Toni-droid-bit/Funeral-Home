@@ -629,6 +629,18 @@ export default function CaseDetail() {
                           return item.isCompleted;
                         }).length;
 
+                        // Sort: incomplete items first, completed at bottom
+                        const sortedItems = [...items].sort((a, b) => {
+                          const aComp = a.fieldMapping
+                            ? Boolean(a.fieldMapping.split('.').reduce((obj: any, k) => obj?.[k], intake))
+                            : a.isCompleted;
+                          const bComp = b.fieldMapping
+                            ? Boolean(b.fieldMapping.split('.').reduce((obj: any, k) => obj?.[k], intake))
+                            : b.isCompleted;
+                          if (aComp === bComp) return 0;
+                          return aComp ? 1 : -1;
+                        });
+
                         return (
                           <div key={category} className="space-y-2">
                             <h4 className={`text-sm font-semibold flex items-center justify-between gap-2 ${config.iconColor}`}>
@@ -636,7 +648,7 @@ export default function CaseDetail() {
                               <span className="text-muted-foreground">{completedInCategory}/{items.length}</span>
                             </h4>
                             <div className="space-y-1">
-                              {items.map(item => {
+                              {sortedItems.map(item => {
                                 // For field-mapped items, compute isCompleted directly from the local
                                 // intakeData so the tick is always in sync — even when the checklist
                                 // server query is stale (e.g. after transcript parsing updates intakeData).

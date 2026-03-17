@@ -141,6 +141,29 @@ export function getFieldLabel(field: string): string {
   return labels[field] || field;
 }
 
+/**
+ * Remove AI-extracted fields that have been manually overridden by the funeral director.
+ * `manualFields` is a map of dot-paths (e.g. "deceasedInfo.fullName") → true.
+ * Any field present in `manualFields` is deleted from `extracted` before merging,
+ * so the manual value in `existing` is never overwritten by AI.
+ */
+export function filterManualOverrides(extracted: IntakeData, manualFields: Record<string, boolean>): IntakeData {
+  if (!manualFields || Object.keys(manualFields).length === 0) return extracted;
+  const result: any = JSON.parse(JSON.stringify(extracted));
+  for (const path of Object.keys(manualFields)) {
+    const parts = path.split(".");
+    let cursor = result;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (cursor == null || typeof cursor[parts[i]] !== "object") { cursor = null; break; }
+      cursor = cursor[parts[i]];
+    }
+    if (cursor != null) {
+      delete cursor[parts[parts.length - 1]];
+    }
+  }
+  return result as IntakeData;
+}
+
 export function mergeIntakeData(existing: IntakeData, newData: IntakeData): IntakeData {
   const deepMerge = (target: any, source: any): any => {
     if (!source) return target;
