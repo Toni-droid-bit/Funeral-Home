@@ -30,6 +30,7 @@ export interface IStorage {
   deleteAllCases(): Promise<void>;
   resetAllData(): Promise<void>;
   findCasesByDeceasedName(name: string): Promise<Case[]>;
+  findCaseByDeceasedName(name: string): Promise<Case | undefined>;
 
   // Calls (xLink)
   getCalls(): Promise<Call[]>;
@@ -140,6 +141,11 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(cases)
       .where(ilike(cases.deceasedName, `%${name}%`))
       .orderBy(desc(cases.createdAt));
+  }
+
+  async findCaseByDeceasedName(name: string): Promise<Case | undefined> {
+    const results = await this.findCasesByDeceasedName(name.trim());
+    return results[0];
   }
 
   // Calls

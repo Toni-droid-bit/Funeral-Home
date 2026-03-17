@@ -5,7 +5,6 @@ import { z } from "zod";
 
 // Import Auth and Chat models from integrations
 export * from "./models/auth";
-export * from "./models/chat";
 
 // === TABLE DEFINITIONS ===
 
@@ -99,6 +98,13 @@ export const intakeDataSchema = z.object({
     probate: z.string().optional(),
     masonry: z.string().optional(),
   }).optional(),
+  // Additional next-of-kin / callers who have contacted us about the same case
+  additionalContacts: z.array(z.object({
+    name: z.string().optional(),
+    phone: z.string().optional(),
+    relationship: z.string().optional(),
+    email: z.string().optional(),
+  })).optional(),
 
   // ── BILLING DETAILS ──
   billing: z.object({

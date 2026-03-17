@@ -487,11 +487,8 @@ export async function registerRoutes(
           const missingFields = calculateMissingFields(mergedIntake);
           const caseUpdates: any = { intakeData: mergedIntake, missingFields };
 
-          const isPatchCallPlaceholder = !existingCase.deceasedName ||
-            existingCase.deceasedName === "Unknown (Pending)" ||
-            existingCase.deceasedName === "New Case" ||
-            existingCase.deceasedName.toLowerCase().startsWith("unknown");
-          if (intakeData.deceasedInfo?.fullName && isPatchCallPlaceholder) {
+          if (intakeData.deceasedInfo?.fullName &&
+            intakeData.deceasedInfo.fullName !== existingCase.deceasedName) {
             caseUpdates.deceasedName = intakeData.deceasedInfo.fullName;
           }
           if (intakeData.servicePreferences?.religion &&
@@ -569,7 +566,7 @@ export async function registerRoutes(
           const caseUpdates: any = { intakeData: mergedIntake, missingFields };
 
           if (intakeData.deceasedInfo?.fullName &&
-            (existingCase.deceasedName === "Unknown (Pending)" || !existingCase.deceasedName)) {
+            intakeData.deceasedInfo.fullName !== existingCase.deceasedName) {
             caseUpdates.deceasedName = intakeData.deceasedInfo.fullName;
           }
           const extractedReligion = intakeData.deceasedInfo?.religion || intakeData.servicePreferences?.religion;
@@ -664,12 +661,9 @@ export async function registerRoutes(
             missingFields: newMissingFields,
           };
 
-          // Update deceased name if extracted and current is placeholder
-          const isCallPlaceholder = !existingCase.deceasedName ||
-            existingCase.deceasedName === "Unknown (Pending)" ||
-            existingCase.deceasedName === "New Case" ||
-            existingCase.deceasedName.toLowerCase().startsWith("unknown");
-          if (intakeData.deceasedInfo?.fullName && isCallPlaceholder) {
+          // Update deceased name whenever a better name is extracted
+          if (intakeData.deceasedInfo?.fullName &&
+            intakeData.deceasedInfo.fullName !== existingCase.deceasedName) {
             updates.deceasedName = intakeData.deceasedInfo.fullName;
           }
 
@@ -813,9 +807,9 @@ export async function registerRoutes(
             missingFields: newMissingFields,
           };
 
-          // Update deceased name if extracted and current is placeholder
+          // Update deceased name whenever a better name is extracted
           if (intakeData.deceasedInfo?.fullName &&
-            (existingCase.deceasedName === "Unknown (Pending)" || !existingCase.deceasedName)) {
+            intakeData.deceasedInfo.fullName !== existingCase.deceasedName) {
             updates.deceasedName = intakeData.deceasedInfo.fullName;
           }
 
@@ -945,12 +939,9 @@ export async function registerRoutes(
         missingFields: newMissingFields,
       };
 
-      // Update deceased name if extracted and current is a placeholder
-      const isLivePlaceholder = !caseItem.deceasedName ||
-        caseItem.deceasedName === "Unknown (Pending)" ||
-        caseItem.deceasedName === "New Case" ||
-        caseItem.deceasedName.toLowerCase().startsWith("unknown");
-      if (intakeData.deceasedInfo?.fullName && isLivePlaceholder) {
+      // Update deceased name whenever a better name is extracted
+      if (intakeData.deceasedInfo?.fullName &&
+        intakeData.deceasedInfo.fullName !== caseItem.deceasedName) {
         updates.deceasedName = intakeData.deceasedInfo.fullName;
       }
 

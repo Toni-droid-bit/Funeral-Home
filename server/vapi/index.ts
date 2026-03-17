@@ -335,9 +335,9 @@ export function registerVapiRoutes(app: Express) {
               const newMissing = calculateMissingFields(mergedIntake);
               const updates: any = { intakeData: mergedIntake, missingFields: newMissing };
 
-              // Always promote a real name over "Unknown (Pending)"
+              // Update deceased name whenever a better name is extracted
               if (intakeData.deceasedInfo?.fullName &&
-                (existingCase.deceasedName === "Unknown (Pending)" || !existingCase.deceasedName)) {
+                intakeData.deceasedInfo.fullName !== existingCase.deceasedName) {
                 updates.deceasedName = intakeData.deceasedInfo.fullName;
                 console.log(`[vapi] updating case ${localCall.caseId} name → "${intakeData.deceasedInfo.fullName}"`);
               }

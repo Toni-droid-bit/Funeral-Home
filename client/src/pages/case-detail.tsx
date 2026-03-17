@@ -9,7 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Phone, Mic, FileText, ArrowLeft, Loader2, Calendar, CheckCircle2, ClipboardList, Trash2, Pencil, AlertCircle, Sparkles } from "lucide-react";
+import { Phone, Mic, FileText, ArrowLeft, Loader2, Calendar, CheckCircle2, ClipboardList, Trash2, Pencil, AlertCircle, Sparkles, Users } from "lucide-react";
 import { format } from "date-fns";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -1076,6 +1076,45 @@ export default function CaseDetail() {
               </CardContent>
             </Card>
           )}
+
+          {(() => {
+            const intakeData = caseData.intakeData as any;
+            const primary = intakeData?.callerInfo;
+            const additional: any[] = intakeData?.additionalContacts || [];
+            const hasContacts = primary?.name || additional.length > 0;
+            if (!hasContacts) return null;
+            return (
+              <Card className="shadow-sm">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Users className="w-4 h-4" />
+                    Next of Kin
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {primary?.name && (
+                    <div className="p-3 rounded-lg bg-muted/40 border">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-medium text-sm">{primary.name}</span>
+                        <span className="text-xs text-muted-foreground bg-primary/10 px-2 py-0.5 rounded-full">Primary</span>
+                      </div>
+                      {primary.relationship && <p className="text-xs text-muted-foreground">{primary.relationship}</p>}
+                      {primary.phone && <p className="text-xs text-muted-foreground mt-1">{primary.phone}</p>}
+                      {primary.email && <p className="text-xs text-muted-foreground">{primary.email}</p>}
+                    </div>
+                  )}
+                  {additional.map((contact: any, i: number) => (
+                    <div key={i} className="p-3 rounded-lg bg-muted/40 border">
+                      <span className="font-medium text-sm">{contact.name || "Unknown"}</span>
+                      {contact.relationship && <p className="text-xs text-muted-foreground">{contact.relationship}</p>}
+                      {contact.phone && <p className="text-xs text-muted-foreground mt-1">{contact.phone}</p>}
+                      {contact.email && <p className="text-xs text-muted-foreground">{contact.email}</p>}
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            );
+          })()}
 
           <Card className="bg-primary/5 border-primary/10 shadow-sm">
             <CardHeader>

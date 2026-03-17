@@ -45,7 +45,27 @@ export async function applyIntakeToExistingCase(
   sourceLabel: string, // e.g. "call" or "meeting"
   sourceDate: Date
 ): Promise<Case> {
-  const mergedIntake = mergeIntakeData((existingCase.intakeData as IntakeData) || {}, intakeData);
+  const currentIntake = (existingCase.intakeData as IntakeData) || {};
+  const mergedIntake = mergeIntakeData(currentIntake, intakeData);
+
+  // If the new caller differs from the primary contact, add them as an additional contact
+  const newCaller = intakeData.callerInfo;
+  const primaryCaller = currentIntake.callerInfo;
+  const existingAdditional: any[] = (currentIntake as any).additionalContacts || [];
+  if (newCaller?.name) {
+    const isPrimary = primaryCaller && (
+      (primaryCaller.name && newCaller.name && primaryCaller.name.toLowerCase() === newCaller.name.toLowerCase()) ||
+      (primaryCaller.phone && newCaller.phone && primaryCaller.phone === newCaller.phone)
+    );
+    const isDuplicate = existingAdditional.some((c: any) =>
+      (c.name && newCaller.name && c.name.toLowerCase() === newCaller.name.toLowerCase()) ||
+      (c.phone && newCaller.phone && c.phone === newCaller.phone)
+    );
+    if (!isPrimary && !isDuplicate) {
+      (mergedIntake as any).additionalContacts = [...existingAdditional, newCaller];
+    }
+  }
+
   const newMissingFields = calculateMissingFields(mergedIntake);
 
   const updates: any = {
