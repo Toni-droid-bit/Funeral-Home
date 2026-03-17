@@ -35,6 +35,7 @@ export default function CommunicationsRecord() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [liveTranscript, setLiveTranscript] = useState("");
+  const [interimTranscript, setInterimTranscript] = useState("");
 
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -44,7 +45,7 @@ export default function CommunicationsRecord() {
 
   const { data: cases = [] } = useQuery<Case[]>({ queryKey: ["/api/cases"] });
 
-  const { data: checklist, isLoading: checklistLoading, refetch: refetchChecklist } =
+  const { data: checklist, isLoading: checklistLoading } =
     useComputedChecklist(caseId, true, isRecording);
 
   const caseName = (() => {
@@ -131,8 +132,7 @@ export default function CommunicationsRecord() {
     mutationFn: ({ caseId, transcript }: { caseId: number; transcript: string }) =>
       apiRequest("POST", `/api/cases/${caseId}/live-extract`, { transcript }),
     onSuccess: () => {
-      refetchChecklist();
-      queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases", caseId, "checklist"] });
     },
     onError: (error: any) => {
       console.log("Live extraction skipped:", error?.message);
@@ -144,6 +144,7 @@ export default function CommunicationsRecord() {
     enabled: isRecording && !!caseId,
     onProcess: (transcript) =>
       liveExtractMutation.mutateAsync({ caseId: Number(caseId), transcript }),
+    minLength: 20,
   });
 
   // ── Recording ──
@@ -199,8 +200,13 @@ export default function CommunicationsRecord() {
           processor.connect(audioContext.destination);
         }
 
-        if (data.type === "transcript" && data.isFinal) {
-          setLiveTranscript(data.fullTranscript);
+        if (data.type === "transcript") {
+          if (data.isFinal) {
+            setLiveTranscript(data.fullTranscript);
+            setInterimTranscript("");
+          } else {
+            setInterimTranscript(data.transcript);
+          }
         }
       };
 
@@ -230,6 +236,7 @@ export default function CommunicationsRecord() {
     cleanupAudio();
     setIsRecording(false);
     setIsConnecting(false);
+    setInterimTranscript("");
 
     if (!finalTranscript) {
       toast({ title: "No transcript captured", description: "Nothing was recorded." });
@@ -450,11 +457,18 @@ export default function CommunicationsRecord() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="min-h-[300px] max-h-[350px] overflow-y-auto p-3 bg-muted/50 rounded-md">
-              {liveTranscript ? (
-                <p className="text-sm whitespace-pre-wrap">{liveTranscript}</p>
-              ) : (
-                <p className="text-sm text-muted-foreground italic">
+            <div className="min-h-[300px] max-h-[350px] overflow-y-auto p-3 bg-muted/50 rounded-md font-mono text-sm leading-relaxed">
+              {liveTranscript && (
+                <p className="whitespace-pre-wrap">{liveTranscript}</p>
+              )}
+              {interimTranscript && (
+                <p className="text-amber-600 dark:text-amber-400 italic mt-1">
+                  {interimTranscript}
+                  <span className="animate-pulse ml-1">▍</span>
+                </p>
+              )}
+              {!liveTranscript && !interimTranscript && (
+                <p className="text-muted-foreground italic">
                   {isConnecting
                     ? "Waiting for connection…"
                     : isRecording

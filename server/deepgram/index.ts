@@ -42,7 +42,6 @@ export function setupDeepgramWebSocket(httpServer: Server) {
               model: 'nova-2',
               language,
               punctuate: 'true',
-              diarize: 'true',
               smart_format: 'true',
               encoding: 'linear16',
               sample_rate: '16000',
