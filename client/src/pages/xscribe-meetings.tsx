@@ -145,6 +145,7 @@ export default function XScribeMeetings() {
   const [newCaseName, setNewCaseName] = useState("");
   const [checklistInputs, setChecklistInputs] = useState<Record<string, string>>({});
   const [reviewMeetingId, setReviewMeetingId] = useState<number | null>(null);
+  const [isSavingTranscript, setIsSavingTranscript] = useState(false);
 
   // Fetch intake data when case is selected
   const { data: intakeData } = useQuery({
@@ -1256,17 +1257,26 @@ export default function XScribeMeetings() {
             <Button
               variant="outline"
               onClick={async () => {
+                if (isSavingTranscript || extractDataMutation.isPending) return;
                 if (reviewMeetingId) {
-                  await apiRequest("PATCH", `/api/meetings/${reviewMeetingId}`, { transcript: editableTranscript });
+                  setIsSavingTranscript(true);
+                  try {
+                    await apiRequest("PATCH", `/api/meetings/${reviewMeetingId}`, { transcript: editableTranscript });
+                  } catch (e) {
+                    console.error("Failed to save transcript:", e);
+                  } finally {
+                    setIsSavingTranscript(false);
+                  }
                 }
                 extractDataMutation.mutate(editableTranscript);
               }}
-              disabled={extractDataMutation.isPending || !editableTranscript.trim()}
+              disabled={isSavingTranscript || extractDataMutation.isPending || !editableTranscript.trim()}
               className="px-6 py-5"
             >
-              {extractDataMutation.isPending ? (
+              {(isSavingTranscript || extractDataMutation.isPending) ? (
                 <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" /> {reviewMeetingId ? "Saving & Re-parsing..." : "Extracting..."}
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  {isSavingTranscript ? "Saving..." : reviewMeetingId ? "Re-parsing..." : "Extracting..."}
                 </>
               ) : (
                 <>

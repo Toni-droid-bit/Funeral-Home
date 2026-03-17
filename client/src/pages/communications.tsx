@@ -89,6 +89,7 @@ export default function Communications() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [editableTranscript, setEditableTranscript] = useState("");
+  const [isSavingTranscript, setIsSavingTranscript] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState("");
   const [isConnecting, setIsConnecting] = useState(false);
   const [isEnteringRecording, setIsEnteringRecording] = useState(false);
@@ -864,27 +865,30 @@ export default function Communications() {
                   size="sm"
                   variant="outline"
                   onClick={async () => {
+                    if (isSavingTranscript || reprocessCallMutation.isPending) return;
                     const call = selectedItem.originalData as Call;
-                    // Save edited transcript first if it has changed
                     if (editableTranscript !== (call.transcript || "")) {
+                      setIsSavingTranscript(true);
                       try {
                         await apiRequest("PATCH", `/api/calls/${call.id}`, { transcript: editableTranscript });
                         queryClient.invalidateQueries({ queryKey: ["/api/calls"] });
                       } catch (e) {
                         console.error("Failed to save call transcript:", e);
+                      } finally {
+                        setIsSavingTranscript(false);
                       }
                     }
                     reprocessCallMutation.mutate(call.id);
                   }}
-                  disabled={reprocessCallMutation.isPending}
+                  disabled={isSavingTranscript || reprocessCallMutation.isPending}
                   data-testid="button-reprocess-call"
                 >
-                  {reprocessCallMutation.isPending ? (
+                  {(isSavingTranscript || reprocessCallMutation.isPending) ? (
                     <Loader2 className="w-4 h-4 animate-spin mr-2" />
                   ) : (
                     <CheckCircle2 className="w-4 h-4 mr-2" />
                   )}
-                  Save & Extract
+                  {isSavingTranscript ? "Saving..." : "Save & Extract"}
                 </Button>
               )}
               {selectedItem?.type === "meeting" && (selectedItem.originalData as Meeting).id && (
@@ -892,28 +896,31 @@ export default function Communications() {
                   size="sm"
                   variant="outline"
                   onClick={async () => {
+                    if (isSavingTranscript || reprocessMeetingMutation.isPending) return;
                     const meeting = selectedItem.originalData as Meeting;
-                    // Save edited transcript first if it has changed
                     if (editableTranscript !== (meeting.transcript || "")) {
+                      setIsSavingTranscript(true);
                       try {
                         await apiRequest("PATCH", `/api/meetings/${meeting.id}`, { transcript: editableTranscript });
                         queryClient.invalidateQueries({ queryKey: ["/api/meetings"] });
                         queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
                       } catch (e) {
                         console.error("Failed to save meeting transcript:", e);
+                      } finally {
+                        setIsSavingTranscript(false);
                       }
                     }
                     reprocessMeetingMutation.mutate(meeting.id);
                   }}
-                  disabled={reprocessMeetingMutation.isPending}
+                  disabled={isSavingTranscript || reprocessMeetingMutation.isPending}
                   data-testid="button-reprocess-meeting"
                 >
-                  {reprocessMeetingMutation.isPending ? (
+                  {(isSavingTranscript || reprocessMeetingMutation.isPending) ? (
                     <Loader2 className="w-4 h-4 animate-spin mr-2" />
                   ) : (
                     <CheckCircle2 className="w-4 h-4 mr-2" />
                   )}
-                  Save & Extract
+                  {isSavingTranscript ? "Saving..." : "Save & Extract"}
                 </Button>
               )}
             </CardHeader>
