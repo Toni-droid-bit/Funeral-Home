@@ -264,6 +264,7 @@ export default function XScribeMeetings() {
       return apiRequest("POST", `/api/cases/${selectedCaseId}/process-transcript`, { transcript });
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/cases", selectedCaseId, "intake"] });
       queryClient.invalidateQueries({ queryKey: ["/api/cases", selectedCaseId, "checklist"] });
       queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
       refetchChecklist();

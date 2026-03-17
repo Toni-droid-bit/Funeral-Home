@@ -178,6 +178,8 @@ export default function Communications() {
       queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", selectedCaseId] });
       queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", data.caseId?.toString()] });
       queryClient.invalidateQueries({ queryKey: ["/api/cases", selectedCaseId, "checklist"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases", selectedCaseId, "intake"] });
+      if (data.caseId) queryClient.invalidateQueries({ queryKey: ["/api/cases", data.caseId.toString(), "intake"] });
       queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
       queryClient.invalidateQueries({ queryKey: ["/api/calls"] });
       toast({
@@ -209,6 +211,7 @@ export default function Communications() {
       if (data?.caseId) {
         queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", data.caseId.toString()] });
         queryClient.invalidateQueries({ queryKey: ["/api/cases", data.caseId.toString(), "checklist"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/cases", data.caseId.toString(), "intake"] });
       }
       toast({
         title: "Meeting Reprocessed",
