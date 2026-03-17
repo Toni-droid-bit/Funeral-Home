@@ -144,6 +144,7 @@ export default function XScribeMeetings() {
   const [isNewCase, setIsNewCase] = useState(false);
   const [newCaseName, setNewCaseName] = useState("");
   const [checklistInputs, setChecklistInputs] = useState<Record<string, string>>({});
+  const [reviewMeetingId, setReviewMeetingId] = useState<number | null>(null);
 
   // Fetch intake data when case is selected
   const { data: intakeData } = useQuery({
@@ -408,6 +409,7 @@ export default function XScribeMeetings() {
     setIsNewCase(false);
     setNewCaseName("");
     setChecklistInputs({});
+    setReviewMeetingId(null);
   };
 
   const cleanupRecording = () => {
@@ -1252,17 +1254,22 @@ export default function XScribeMeetings() {
           {selectedCaseId && (
             <Button
               variant="outline"
-              onClick={() => extractDataMutation.mutate(editableTranscript)}
+              onClick={async () => {
+                if (reviewMeetingId) {
+                  await apiRequest("PATCH", `/api/meetings/${reviewMeetingId}`, { transcript: editableTranscript });
+                }
+                extractDataMutation.mutate(editableTranscript);
+              }}
               disabled={extractDataMutation.isPending || !editableTranscript.trim()}
               className="px-6 py-5"
             >
               {extractDataMutation.isPending ? (
                 <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Extracting...
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" /> {reviewMeetingId ? "Saving & Re-parsing..." : "Extracting..."}
                 </>
               ) : (
                 <>
-                  <Sparkles className="w-4 h-4 mr-2" /> Extract Data
+                  <Sparkles className="w-4 h-4 mr-2" /> {reviewMeetingId ? "Save & Re-parse" : "Extract Data"}
                 </>
               )}
             </Button>
@@ -1547,6 +1554,7 @@ export default function XScribeMeetings() {
                         setEditableTranscript(meeting.transcript || "");
                         setSelectedCaseId(meeting.caseId?.toString() || "");
                         setDirectorName(meeting.directorName || "");
+                        setReviewMeetingId(meeting.id);
                         setMode("review");
                       }}
                       data-testid={`button-review-meeting-${meeting.id}`}
