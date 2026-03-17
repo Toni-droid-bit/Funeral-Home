@@ -119,7 +119,10 @@ export default function CommunicationsReview() {
   });
 
   const reprocessCallMutation = useMutation({
-    mutationFn: async () => apiRequest("POST", `/api/calls/${id}/reprocess`, {}),
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/calls/${id}/reprocess`, {});
+      return res.json();
+    },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/calls", id] });
       queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
@@ -143,7 +146,10 @@ export default function CommunicationsReview() {
   });
 
   const reprocessMeetingMutation = useMutation({
-    mutationFn: async () => apiRequest("POST", `/api/meetings/${id}/reprocess`, {}),
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/meetings/${id}/reprocess`, {});
+      return res.json();
+    },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/meetings", id] });
       queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
