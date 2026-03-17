@@ -1,6 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useComputedChecklist } from "@/hooks/use-computed-checklist";
+import { useTranscriptPolling } from "@/hooks/use-transcript-polling";
+import { SaveAndExtractButton } from "@/components/save-and-extract-button";
+import { CATEGORY_CONFIG, LANGUAGES as SHARED_LANGUAGES } from "@/constants/checklist-config";
+import { formatTime } from "@/lib/format-time";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -52,12 +57,7 @@ interface ChecklistItemWithStatus {
   isManuallyCompleted: boolean;
 }
 
-interface ComputedChecklist {
-  items: ChecklistItemWithStatus[];
-  completedCount: number;
-  totalItems: number;
-  completedPercentage: number;
-}
+import type { ComputedChecklist } from "@/hooks/use-computed-checklist";
 
 interface CommunicationItem {
   id: string;
@@ -73,12 +73,7 @@ interface CommunicationItem {
   originalData: Call | Meeting;
 }
 
-const LANGUAGES = [
-  { code: "en", label: "English" },
-  { code: "pl", label: "Polish" },
-  { code: "es", label: "Spanish" },
-  { code: "zh", label: "Chinese" },
-];
+const LANGUAGES = SHARED_LANGUAGES;
 
 export default function Communications() {
   const [mode, setMode] = useState<Mode>("hub");
@@ -89,7 +84,6 @@ export default function Communications() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [editableTranscript, setEditableTranscript] = useState("");
-  const [isSavingTranscript, setIsSavingTranscript] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState("");
   const [isConnecting, setIsConnecting] = useState(false);
   const [isEnteringRecording, setIsEnteringRecording] = useState(false);
@@ -112,9 +106,7 @@ export default function Communications() {
   const recordingTimerRef = useRef<number | null>(null);
   const lastExtractionRef = useRef<string>("");
   const extractionTimerRef = useRef<number | null>(null);
-  // Ref-based transcript tracking so the 5s polling interval is stable
-  const liveTranscriptRef = useRef("");
-  const isExtractingRef = useRef(false);
+  // (transcript polling refs are managed by useTranscriptPolling below)
 
   const { data: calls = [], isLoading: callsLoading } = useQuery<Call[]>({
     queryKey: ["/api/calls"],
@@ -128,17 +120,11 @@ export default function Communications() {
     queryKey: ["/api/cases"],
   });
 
-  const { data: checklist, isLoading: checklistLoading, refetch: refetchChecklist } = useQuery<ComputedChecklist>({
-    queryKey: ["/api/cases", selectedCaseId, "checklist"],
-    queryFn: async () => {
-      const res = await fetch(`/api/cases/${selectedCaseId}/checklist`);
-      if (!res.ok) throw new Error("Failed to fetch checklist");
-      return res.json();
-    },
-    enabled: !!selectedCaseId && (mode === "review" || mode === "recording"),
-    // Poll every 5 seconds during recording so completed ticks appear immediately
-    refetchInterval: isRecording ? 5000 : false,
-  });
+  const { data: checklist, isLoading: checklistLoading, refetch: refetchChecklist } = useComputedChecklist(
+    selectedCaseId,
+    mode === "review" || mode === "recording",
+    isRecording,
+  );
 
   // Fetch selected case details for extracted data display
   const { data: selectedCase } = useQuery<Case>({
@@ -350,31 +336,13 @@ export default function Communications() {
     };
   }, [cleanupAudio]);
 
-  // Keep liveTranscriptRef in sync so the polling interval can read the latest transcript
-  // without being itself a dependency (which would reset the interval on every new word).
-  useEffect(() => {
-    liveTranscriptRef.current = liveTranscript;
-  }, [liveTranscript]);
-
-  // Real-time extraction during recording — stable 5-second interval.
-  // Uses liveTranscriptRef so the interval never resets on each new transcription word.
-  useEffect(() => {
-    if (!isRecording || !selectedCaseId) return;
-
-    const interval = setInterval(() => {
-      const transcript = liveTranscriptRef.current;
-      if (transcript && transcript.length > 50 && !isExtractingRef.current) {
-        console.log(`[comms] 5s poll — extracting (${transcript.length} chars)`);
-        isExtractingRef.current = true;
-        liveExtractMutation.mutate(
-          { caseId: Number(selectedCaseId), transcript },
-          { onSettled: () => { isExtractingRef.current = false; } }
-        );
-      }
-    }, 5000); // Every 5 seconds — stable, not reset by new words
-
-    return () => clearInterval(interval);
-  }, [isRecording, selectedCaseId]); // NOT liveTranscript — uses ref above
+  // Real-time extraction during recording — stable 5-second interval via shared hook.
+  useTranscriptPolling({
+    transcript: liveTranscript,
+    enabled: isRecording && !!selectedCaseId,
+    onProcess: (transcript) =>
+      liveExtractMutation.mutateAsync({ caseId: Number(selectedCaseId), transcript }),
+  });
 
   // Called by the "Record" button in hub mode — sets up case before entering recording screen
   const handleEnterRecordingMode = async () => {
@@ -592,11 +560,7 @@ export default function Communications() {
     setRecordingTime(0);
   };
 
-  const categoryConfig: Record<string, { label: string; bgColor: string; iconColor: string }> = {
-    critical: { label: "Critical", bgColor: "bg-red-50 dark:bg-red-900/20", iconColor: "text-red-600 dark:text-red-400" },
-    important: { label: "Important", bgColor: "bg-amber-50 dark:bg-amber-900/20", iconColor: "text-amber-600 dark:text-amber-400" },
-    supplementary: { label: "Supplementary", bgColor: "bg-blue-50 dark:bg-blue-900/20", iconColor: "text-blue-600 dark:text-blue-400" },
-  };
+  const categoryConfig = CATEGORY_CONFIG;
 
   const groupedChecklist = checklist?.items?.reduce((acc, item) => {
     const cat = item.category || "supplementary";
@@ -693,8 +657,7 @@ export default function Communications() {
               </div>
 
               <div className="text-3xl font-mono mb-4">
-                {Math.floor(recordingTime / 60).toString().padStart(2, "0")}:
-                {(recordingTime % 60).toString().padStart(2, "0")}
+                {formatTime(recordingTime)}
               </div>
 
               <Button
@@ -861,67 +824,33 @@ export default function Communications() {
                 Transcript
               </CardTitle>
               {selectedItem?.type === "call" && (selectedItem.originalData as Call).id && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={async () => {
-                    if (isSavingTranscript || reprocessCallMutation.isPending) return;
+                <SaveAndExtractButton
+                  onSave={async () => {
                     const call = selectedItem.originalData as Call;
                     if (editableTranscript !== (call.transcript || "")) {
-                      setIsSavingTranscript(true);
-                      try {
-                        await apiRequest("PATCH", `/api/calls/${call.id}`, { transcript: editableTranscript });
-                        queryClient.invalidateQueries({ queryKey: ["/api/calls"] });
-                      } catch (e) {
-                        console.error("Failed to save call transcript:", e);
-                      } finally {
-                        setIsSavingTranscript(false);
-                      }
+                      await apiRequest("PATCH", `/api/calls/${call.id}`, { transcript: editableTranscript });
+                      queryClient.invalidateQueries({ queryKey: ["/api/calls"] });
                     }
-                    reprocessCallMutation.mutate(call.id);
                   }}
-                  disabled={isSavingTranscript || reprocessCallMutation.isPending}
+                  onExtract={() => reprocessCallMutation.mutate((selectedItem.originalData as Call).id)}
+                  isExtracting={reprocessCallMutation.isPending}
                   data-testid="button-reprocess-call"
-                >
-                  {(isSavingTranscript || reprocessCallMutation.isPending) ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  ) : (
-                    <CheckCircle2 className="w-4 h-4 mr-2" />
-                  )}
-                  {isSavingTranscript ? "Saving..." : "Save & Extract"}
-                </Button>
+                />
               )}
               {selectedItem?.type === "meeting" && (selectedItem.originalData as Meeting).id && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={async () => {
-                    if (isSavingTranscript || reprocessMeetingMutation.isPending) return;
+                <SaveAndExtractButton
+                  onSave={async () => {
                     const meeting = selectedItem.originalData as Meeting;
                     if (editableTranscript !== (meeting.transcript || "")) {
-                      setIsSavingTranscript(true);
-                      try {
-                        await apiRequest("PATCH", `/api/meetings/${meeting.id}`, { transcript: editableTranscript });
-                        queryClient.invalidateQueries({ queryKey: ["/api/meetings"] });
-                        queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
-                      } catch (e) {
-                        console.error("Failed to save meeting transcript:", e);
-                      } finally {
-                        setIsSavingTranscript(false);
-                      }
+                      await apiRequest("PATCH", `/api/meetings/${meeting.id}`, { transcript: editableTranscript });
+                      queryClient.invalidateQueries({ queryKey: ["/api/meetings"] });
+                      queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
                     }
-                    reprocessMeetingMutation.mutate(meeting.id);
                   }}
-                  disabled={isSavingTranscript || reprocessMeetingMutation.isPending}
+                  onExtract={() => reprocessMeetingMutation.mutate((selectedItem.originalData as Meeting).id)}
+                  isExtracting={reprocessMeetingMutation.isPending}
                   data-testid="button-reprocess-meeting"
-                >
-                  {(isSavingTranscript || reprocessMeetingMutation.isPending) ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  ) : (
-                    <CheckCircle2 className="w-4 h-4 mr-2" />
-                  )}
-                  {isSavingTranscript ? "Saving..." : "Save & Extract"}
-                </Button>
+                />
               )}
             </CardHeader>
             <CardContent>

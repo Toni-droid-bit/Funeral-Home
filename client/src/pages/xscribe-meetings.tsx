@@ -1,6 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useMeetings } from "@/hooks/use-meetings";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useComputedChecklist } from "@/hooks/use-computed-checklist";
+import { useTranscriptPolling } from "@/hooks/use-transcript-polling";
+import { SaveAndExtractButton } from "@/components/save-and-extract-button";
+import { CATEGORY_CONFIG, LANGUAGES as SHARED_LANGUAGES } from "@/constants/checklist-config";
+import { formatTime } from "@/lib/format-time";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -62,20 +67,7 @@ function floatTo16BitPCM(float32Array: Float32Array): ArrayBuffer {
 
 type Mode = "list" | "setup" | "recording" | "review";
 
-const LANGUAGES = [
-  { code: "en", label: "English" },
-  { code: "pl", label: "Polish" },
-  { code: "ro", label: "Romanian" },
-  { code: "hi", label: "Hindi / Punjabi" },
-  { code: "zh", label: "Chinese (Mandarin)" },
-  { code: "es", label: "Spanish" },
-  { code: "fr", label: "French" },
-  { code: "de", label: "German" },
-  { code: "it", label: "Italian" },
-  { code: "pt", label: "Portuguese" },
-  { code: "tr", label: "Turkish" },
-  { code: "nl", label: "Dutch" },
-];
+const LANGUAGES = SHARED_LANGUAGES;
 
 // ── Checklist Types ──
 
@@ -95,26 +87,6 @@ interface ChecklistTemplate {
   items: ChecklistItem[];
 }
 
-const CATEGORY_CONFIG = {
-  critical: { 
-    label: "Critical", 
-    color: "text-red-600 dark:text-red-400",
-    bgColor: "bg-red-50 dark:bg-red-900/20",
-    iconColor: "text-red-500",
-  },
-  important: { 
-    label: "Important", 
-    color: "text-amber-600 dark:text-amber-400",
-    bgColor: "bg-amber-50 dark:bg-amber-900/20",
-    iconColor: "text-amber-500",
-  },
-  supplementary: { 
-    label: "Supplementary", 
-    color: "text-blue-600 dark:text-blue-400",
-    bgColor: "bg-blue-50 dark:bg-blue-900/20",
-    iconColor: "text-blue-500",
-  },
-};
 
 // Helper to get nested value from object using dot notation
 function getNestedValue(obj: any, path: string): any {
@@ -140,12 +112,12 @@ export default function XScribeMeetings() {
   const [recordingTime, setRecordingTime] = useState(0);
   const [isConnecting, setIsConnecting] = useState(false);
   const [showChecklistPrompt, setShowChecklistPrompt] = useState(true);
-  const [isProcessingTranscript, setIsProcessingTranscript] = useState(false);
+
   const [isNewCase, setIsNewCase] = useState(false);
   const [newCaseName, setNewCaseName] = useState("");
   const [checklistInputs, setChecklistInputs] = useState<Record<string, string>>({});
   const [reviewMeetingId, setReviewMeetingId] = useState<number | null>(null);
-  const [isSavingTranscript, setIsSavingTranscript] = useState(false);
+
 
   // Fetch intake data when case is selected
   const { data: intakeData } = useQuery({
@@ -175,18 +147,11 @@ export default function XScribeMeetings() {
     completedPercentage: number;
   }
 
-  const { data: computedChecklist, refetch: refetchChecklist } = useQuery<ComputedChecklist | null>({
-    queryKey: ["/api/cases", selectedCaseId, "checklist"],
-    queryFn: async () => {
-      if (!selectedCaseId) return null;
-      const res = await fetch(`/api/cases/${selectedCaseId}/checklist`);
-      if (!res.ok) return null;
-      return res.json();
-    },
-    enabled: !!selectedCaseId && (mode === "review" || mode === "recording"),
-    // Refresh every 5 seconds during recording — checklist updates in real time
-    refetchInterval: mode === "recording" ? 5000 : false,
-  });
+  const { data: computedChecklist, refetch: refetchChecklist } = useComputedChecklist(
+    selectedCaseId,
+    mode === "review" || mode === "recording",
+    mode === "recording",
+  );
 
   const toggleChecklistMutation = useMutation({
     mutationFn: async (itemId: string) => {
@@ -224,78 +189,30 @@ export default function XScribeMeetings() {
     queryClient.invalidateQueries({ queryKey: ["/api/cases", selectedCaseId, "checklist"] });
   };
 
-  // Keep a ref to the latest transcript so the polling interval doesn't reset on every
-  // new word (which would prevent it from ever firing during active speech).
-  const fullTranscriptRef = useRef("");
-  useEffect(() => {
-    fullTranscriptRef.current = fullTranscript;
-  }, [fullTranscript]);
-
-  // Track in-flight state via ref to avoid stale closures inside the interval.
-  const isProcessingRef = useRef(false);
-
-  // Process transcript in real-time to update checklist
+  // Shared mutation for both auto-polling and manual "Save & Re-parse".
   const processTranscriptMutation = useMutation({
     mutationFn: async (transcript: string) => {
-      console.log(`[xscribe] processTranscriptMutation firing — caseId=${selectedCaseId} transcript length=${transcript.length}`);
-      return apiRequest("POST", `/api/cases/${selectedCaseId}/process-transcript`, {
-        transcript
-      });
-    },
-    onSuccess: () => {
-      console.log(`[xscribe] processTranscriptMutation succeeded — invalidating checklist`);
-      // Invalidate checklist, cases list, and individual case so name updates everywhere
-      queryClient.invalidateQueries({ queryKey: ["/api/cases", selectedCaseId, "checklist"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", Number(selectedCaseId)] });
-      refetchChecklist();
-      isProcessingRef.current = false;
-      setIsProcessingTranscript(false);
-    },
-    onError: (error: any) => {
-      console.error("[xscribe] processTranscriptMutation failed:", error);
-      isProcessingRef.current = false;
-      setIsProcessingTranscript(false);
-    },
-  });
-
-  // Extract data from transcript (manual trigger in review mode)
-  const extractDataMutation = useMutation({
-    mutationFn: async (transcript: string) => {
+      console.log(`[xscribe] process-transcript — caseId=${selectedCaseId} length=${transcript.length}`);
       return apiRequest("POST", `/api/cases/${selectedCaseId}/process-transcript`, { transcript });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/cases", selectedCaseId, "intake"] });
       queryClient.invalidateQueries({ queryKey: ["/api/cases", selectedCaseId, "checklist"] });
       queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases/:id", Number(selectedCaseId)] });
       refetchChecklist();
-      toast({ title: "Data extracted", description: "Checklist updated from transcript." });
     },
-    onError: () => {
-      toast({ title: "Extraction failed", description: "Could not parse transcript.", variant: "destructive" });
+    onError: (error: any) => {
+      console.error("[xscribe] process-transcript failed:", error);
     },
   });
 
-  // Auto-process transcript every 5 seconds during recording.
-  // IMPORTANT: fullTranscript is read via ref so this interval is stable and does NOT
-  // reset on every new word spoken (which would prevent it ever firing).
-  useEffect(() => {
-    if (mode !== "recording" || !selectedCaseId) return;
-
-    const interval = setInterval(() => {
-      const transcript = fullTranscriptRef.current;
-      if (transcript && transcript.length > 50 && !isProcessingRef.current) {
-        console.log(`[xscribe] polling tick — scheduling process-transcript (${transcript.length} chars)`);
-        isProcessingRef.current = true;
-        setIsProcessingTranscript(true);
-        processTranscriptMutation.mutate(transcript);
-      } else {
-        console.log(`[xscribe] polling tick — skipped (length=${transcript?.length ?? 0} inFlight=${isProcessingRef.current})`);
-      }
-    }, 5000); // Every 5 seconds — stable interval, not reset by new words
-
-    return () => clearInterval(interval);
-  }, [mode, selectedCaseId]); // NOT fullTranscript — use ref above
+  // Auto-process transcript every 5 seconds during recording via shared polling hook.
+  useTranscriptPolling({
+    transcript: fullTranscript,
+    enabled: mode === "recording" && !!selectedCaseId,
+    onProcess: (transcript) => processTranscriptMutation.mutateAsync(transcript),
+  });
 
   // Patch case intake data (for editable fields in list mode)
   const patchCaseMutation = useMutation({
@@ -836,7 +753,7 @@ export default function XScribeMeetings() {
             <span className="text-2xl font-mono font-bold text-foreground tabular-nums">
               {formatTime(recordingTime)}
             </span>
-            {isProcessingTranscript && (
+            {processTranscriptMutation.isPending && (
               <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
                 <Sparkles className="w-3 h-3 mr-1" />
                 AI Processing...
@@ -921,7 +838,7 @@ export default function XScribeMeetings() {
                   <h3 className="font-medium text-foreground flex items-center gap-2">
                     <AlertCircle className="w-5 h-5 text-amber-500" />
                     Live Checklist
-                    {isProcessingTranscript && (
+                    {processTranscriptMutation.isPending && (
                       <span className="text-xs text-muted-foreground animate-pulse">updating…</span>
                     )}
                   </h3>
@@ -1254,36 +1171,18 @@ export default function XScribeMeetings() {
           </Button>
 
           {selectedCaseId && (
-            <Button
-              variant="outline"
-              onClick={async () => {
-                if (isSavingTranscript || extractDataMutation.isPending) return;
-                if (reviewMeetingId) {
-                  setIsSavingTranscript(true);
-                  try {
-                    await apiRequest("PATCH", `/api/meetings/${reviewMeetingId}`, { transcript: editableTranscript });
-                  } catch (e) {
-                    console.error("Failed to save transcript:", e);
-                  } finally {
-                    setIsSavingTranscript(false);
-                  }
-                }
-                extractDataMutation.mutate(editableTranscript);
-              }}
-              disabled={isSavingTranscript || extractDataMutation.isPending || !editableTranscript.trim()}
+            <SaveAndExtractButton
+              onSave={reviewMeetingId ? async () => {
+                await apiRequest("PATCH", `/api/meetings/${reviewMeetingId}`, { transcript: editableTranscript });
+              } : undefined}
+              onExtract={() => processTranscriptMutation.mutate(editableTranscript)}
+              isExtracting={processTranscriptMutation.isPending}
+              disabled={!editableTranscript.trim()}
+              label={reviewMeetingId ? "Save & Re-parse" : "Extract Data"}
+              extractingLabel={reviewMeetingId ? "Re-parsing..." : "Extracting..."}
+              size="default"
               className="px-6 py-5"
-            >
-              {(isSavingTranscript || extractDataMutation.isPending) ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  {isSavingTranscript ? "Saving..." : reviewMeetingId ? "Re-parsing..." : "Extracting..."}
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4 mr-2" /> {reviewMeetingId ? "Save & Re-parse" : "Extract Data"}
-                </>
-              )}
-            </Button>
+            />
           )}
 
           {selectedCaseId && (
