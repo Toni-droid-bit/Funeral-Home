@@ -617,101 +617,108 @@ export default function CaseDetail() {
                     <div className="space-y-4">
                       <Progress value={checklist.completedPercentage} className="h-2" />
 
-                      {["critical", "important", "supplementary"].map(category => {
-                        const items = groupedChecklist[category] || [];
-                        if (items.length === 0) return null;
-                        const config = categoryConfig[category];
-                        const completedInCategory = items.filter(item => {
-                          if (item.fieldMapping) {
-                            const val = item.fieldMapping.split('.').reduce((obj: any, key) => obj?.[key], intake);
-                            return Boolean(val);
-                          }
-                          return item.isCompleted;
-                        }).length;
+                      {(() => {
+                        const isItemCompleted = (item: any) => item.fieldMapping
+                          ? Boolean(item.fieldMapping.split('.').reduce((obj: any, key: string) => obj?.[key], intake))
+                          : item.isCompleted;
 
-                        // Sort: incomplete items first, completed at bottom
-                        const sortedItems = [...items].sort((a, b) => {
-                          const aComp = a.fieldMapping
-                            ? Boolean(a.fieldMapping.split('.').reduce((obj: any, k) => obj?.[k], intake))
-                            : a.isCompleted;
-                          const bComp = b.fieldMapping
-                            ? Boolean(b.fieldMapping.split('.').reduce((obj: any, k) => obj?.[k], intake))
-                            : b.isCompleted;
-                          if (aComp === bComp) return 0;
-                          return aComp ? 1 : -1;
-                        });
+                        const renderItem = (item: any, config: any) => {
+                          const currentValue = item.fieldMapping
+                            ? (item.fieldMapping.split('.').reduce((obj: any, key: string) => obj?.[key], intake) || "")
+                            : "";
+                          const isCompleted = isItemCompleted(item);
+                          const isAutoCompleted = item.fieldMapping && isCompleted && !item.isManuallyCompleted;
+                          const canToggle = !item.fieldMapping && !isAutoCompleted;
+
+                          return (
+                            <div
+                              key={item.id}
+                              className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm w-full transition-colors ${
+                                isCompleted
+                                  ? "bg-green-50 dark:bg-green-900/20"
+                                  : config.bgColor
+                              }`}
+                              data-testid={`checklist-item-${item.id}`}
+                            >
+                              <button
+                                onClick={() => canToggle && toggleChecklistMutation.mutate(item.id)}
+                                disabled={toggleChecklistMutation.isPending || !canToggle}
+                                className={`flex-shrink-0 ${canToggle ? "cursor-pointer hover:opacity-70" : "cursor-default"}`}
+                              >
+                                {isCompleted ? (
+                                  <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400" />
+                                ) : (
+                                  <div className={`w-4 h-4 border-2 rounded-full ${config.iconColor} border-current`} />
+                                )}
+                              </button>
+
+                              <div className="flex-1 min-w-0">
+                                <span className={`text-xs font-medium leading-tight ${isCompleted ? "text-green-700 dark:text-green-300" : "text-foreground"}`}>
+                                  {item.question}
+                                </span>
+                                {currentValue && (
+                                  <span className="block text-[11px] text-muted-foreground leading-tight mt-0.5 truncate">
+                                    {currentValue}
+                                  </span>
+                                )}
+                              </div>
+
+                              {item.fieldMapping ? (
+                                <ChecklistValueInput
+                                  currentValue={currentValue}
+                                  onSave={(value) => updateChecklistValueMutation.mutate({ itemId: item.id, value, fieldMapping: item.fieldMapping })}
+                                />
+                              ) : (
+                                isAutoCompleted && (
+                                  <span className="text-[10px] text-muted-foreground flex-shrink-0 bg-muted px-1.5 py-0.5 rounded">auto</span>
+                                )
+                              )}
+                            </div>
+                          );
+                        };
+
+                        const allItems = ["critical", "important", "supplementary"].flatMap(cat =>
+                          (groupedChecklist[cat] || []).map((item: any) => ({ ...item, category: cat }))
+                        );
+
+                        const incomplete = allItems.filter(item => !isItemCompleted(item));
+                        const completed = allItems.filter(item => isItemCompleted(item));
+
+                        const incompleteByCategory = ["critical", "important", "supplementary"].map(cat => ({
+                          cat,
+                          config: categoryConfig[cat],
+                          items: incomplete.filter(item => item.category === cat),
+                        })).filter(g => g.items.length > 0);
 
                         return (
-                          <div key={category} className="space-y-2">
-                            <h4 className={`text-sm font-semibold flex items-center justify-between gap-2 ${config.iconColor}`}>
-                              <span>{config.label}</span>
-                              <span className="text-muted-foreground">{completedInCategory}/{items.length}</span>
-                            </h4>
-                            <div className="space-y-1">
-                              {sortedItems.map(item => {
-                                // For field-mapped items, compute isCompleted directly from the local
-                                // intakeData so the tick is always in sync — even when the checklist
-                                // server query is stale (e.g. after transcript parsing updates intakeData).
-                                const currentValue = item.fieldMapping
-                                  ? (item.fieldMapping.split('.').reduce((obj: any, key) => obj?.[key], intake) || "")
-                                  : "";
-                                const isCompleted = item.fieldMapping
-                                  ? Boolean(currentValue)
-                                  : item.isCompleted;
-
-                                const isAutoCompleted = item.fieldMapping && isCompleted && !item.isManuallyCompleted;
-                                const canToggle = !item.fieldMapping && !isAutoCompleted;
-
-                                return (
-                                  <div
-                                    key={item.id}
-                                    className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm w-full transition-colors ${
-                                      isCompleted
-                                        ? "bg-green-50 dark:bg-green-900/20"
-                                        : config.bgColor
-                                    }`}
-                                    data-testid={`checklist-item-${item.id}`}
-                                  >
-                                    <button
-                                      onClick={() => canToggle && toggleChecklistMutation.mutate(item.id)}
-                                      disabled={toggleChecklistMutation.isPending || !canToggle}
-                                      className={`flex-shrink-0 ${canToggle ? "cursor-pointer hover:opacity-70" : "cursor-default"}`}
-                                    >
-                                      {isCompleted ? (
-                                        <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400" />
-                                      ) : (
-                                        <div className={`w-4 h-4 border-2 rounded-full ${config.iconColor} border-current`} />
-                                      )}
-                                    </button>
-
-                                    <div className="flex-1 min-w-0">
-                                      <span className={`text-xs font-medium leading-tight ${isCompleted ? "text-green-700 dark:text-green-300" : "text-foreground"}`}>
-                                        {item.question}
-                                      </span>
-                                      {currentValue && (
-                                        <span className="block text-[11px] text-muted-foreground leading-tight mt-0.5 truncate">
-                                          {currentValue}
-                                        </span>
-                                      )}
-                                    </div>
-
-                                    {item.fieldMapping ? (
-                                      <ChecklistValueInput
-                                        currentValue={currentValue}
-                                        onSave={(value) => updateChecklistValueMutation.mutate({ itemId: item.id, value, fieldMapping: item.fieldMapping })}
-                                      />
-                                    ) : (
-                                      isAutoCompleted && (
-                                        <span className="text-[10px] text-muted-foreground flex-shrink-0 bg-muted px-1.5 py-0.5 rounded">auto</span>
-                                      )
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
+                          <>
+                            {incompleteByCategory.map(({ cat, config, items }) => (
+                              <div key={cat} className="space-y-2">
+                                <h4 className={`text-sm font-semibold flex items-center justify-between gap-2 ${config.iconColor}`}>
+                                  <span>{config.label}</span>
+                                  <span className="text-muted-foreground">
+                                    {(groupedChecklist[cat] || []).filter((i: any) => isItemCompleted(i)).length}/{(groupedChecklist[cat] || []).length}
+                                  </span>
+                                </h4>
+                                <div className="space-y-1">
+                                  {items.map((item: any) => renderItem(item, config))}
+                                </div>
+                              </div>
+                            ))}
+                            {completed.length > 0 && (
+                              <div className="space-y-2">
+                                <h4 className="text-sm font-semibold flex items-center justify-between gap-2 text-muted-foreground">
+                                  <span>Completed</span>
+                                  <span>{completed.length}</span>
+                                </h4>
+                                <div className="space-y-1">
+                                  {completed.map((item: any) => renderItem(item, categoryConfig[item.category]))}
+                                </div>
+                              </div>
+                            )}
+                          </>
                         );
-                      })}
+                      })()}
                     </div>
                   )}
                   {!checklist && (
