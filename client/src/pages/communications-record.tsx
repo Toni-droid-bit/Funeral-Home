@@ -19,6 +19,7 @@ import {
   ClipboardList,
 } from "lucide-react";
 import type { Case } from "@shared/schema";
+import type { ReprocessResult, MeetingResponse } from "@shared/routes";
 import type { ComputedChecklistItem } from "@/hooks/use-computed-checklist";
 
 export default function CommunicationsRecord() {
@@ -87,11 +88,9 @@ export default function CommunicationsRecord() {
   // ── Mutations ──
 
   const reprocessMeetingMutation = useMutation({
-    mutationFn: async (meetingId: number) => {
-      const res = await apiRequest("POST", `/api/meetings/${meetingId}/reprocess`, {});
-      return res.json();
-    },
-    onSuccess: (data: any) => {
+    mutationFn: (meetingId: number) =>
+      apiRequest<ReprocessResult>("POST", `/api/meetings/${meetingId}/reprocess`, {}),
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
       queryClient.invalidateQueries({ queryKey: ["/api/meetings"] });
       if (data?.caseId) {
@@ -106,16 +105,13 @@ export default function CommunicationsRecord() {
   });
 
   const createMeetingMutation = useMutation({
-    mutationFn: async (data: {
+    mutationFn: (data: {
       caseId?: number | null;
       directorName: string;
       language: string;
       transcript: string;
-    }) => {
-      const res = await apiRequest("POST", "/api/meetings", { ...data, status: "completed" });
-      return res.json();
-    },
-    onSuccess: async (data: any) => {
+    }) => apiRequest<MeetingResponse>("POST", "/api/meetings", { ...data, status: "completed" }),
+    onSuccess: async (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/meetings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
       toast({ title: "Meeting Saved", description: "Extracting intake data…" });
@@ -132,7 +128,7 @@ export default function CommunicationsRecord() {
   });
 
   const liveExtractMutation = useMutation({
-    mutationFn: async ({ caseId, transcript }: { caseId: number; transcript: string }) =>
+    mutationFn: ({ caseId, transcript }: { caseId: number; transcript: string }) =>
       apiRequest("POST", `/api/cases/${caseId}/live-extract`, { transcript }),
     onSuccess: () => {
       refetchChecklist();

@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { Link } from "wouter";
 import type { Call, Meeting, Case, IntakeData } from "@shared/schema";
+import type { ReprocessResult } from "@shared/routes";
 
 function isIntakeData(data: unknown): data is IntakeData {
   return typeof data === "object" && data !== null;
@@ -119,11 +120,8 @@ export default function CommunicationsReview() {
   });
 
   const reprocessCallMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/calls/${id}/reprocess`, {});
-      return res.json();
-    },
-    onSuccess: (data: any) => {
+    mutationFn: () => apiRequest<ReprocessResult>("POST", `/api/calls/${id}/reprocess`, {}),
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/calls", id] });
       queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
       if (data?.caseId) {
@@ -146,11 +144,8 @@ export default function CommunicationsReview() {
   });
 
   const reprocessMeetingMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/meetings/${id}/reprocess`, {});
-      return res.json();
-    },
-    onSuccess: (data: any) => {
+    mutationFn: () => apiRequest<ReprocessResult>("POST", `/api/meetings/${id}/reprocess`, {}),
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/meetings", id] });
       queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
       queryClient.invalidateQueries({ queryKey: ["/api/documents"] });

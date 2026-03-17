@@ -108,26 +108,24 @@ export default function CommunicationsHub() {
         navigate(`/communications/record?caseId=${caseId}&isTempCase=false`);
       } else if (caseSelection.startsWith("new:")) {
         const name = caseSelection.slice(4).trim() || "New Case";
-        const res = await apiRequest("POST", "/api/cases", {
+        const newCase = await apiRequest<{ id: number }>("POST", "/api/cases", {
           deceasedName: name,
           status: "active",
           religion: "Unknown",
           language: "English",
         });
-        const newCase = await res.json();
         if (!newCase?.id) throw new Error("Case creation returned no ID");
         queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
         navigate(`/communications/record?caseId=${newCase.id}&isTempCase=false`);
       } else {
         // No case — create placeholder so checklist has something to bind to
-        const res = await apiRequest("POST", "/api/cases", {
+        const newCase = await apiRequest<{ id: number }>("POST", "/api/cases", {
           deceasedName: "Unknown (Pending)",
           status: "active",
           religion: "Unknown",
           language: "English",
           notes: "Created automatically for meeting recording — name will be detected from transcript.",
         });
-        const newCase = await res.json();
         if (!newCase?.id) throw new Error("Case creation returned no ID");
         queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
         navigate(`/communications/record?caseId=${newCase.id}&isTempCase=true`);
