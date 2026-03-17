@@ -20,6 +20,15 @@ export function setupDeepgramWebSocket(httpServer: Server) {
     let deepgramWs: WebSocket | null = null;
     let fullTranscript = '';
 
+    // Ping the client every 15 seconds to keep Render's proxy from closing the connection
+    const pingInterval = setInterval(() => {
+      if (clientWs.readyState === WebSocket.OPEN) {
+        clientWs.ping();
+      } else {
+        clearInterval(pingInterval);
+      }
+    }, 15000);
+
     clientWs.on('message', (data: Buffer, isBinary: boolean) => {
       if (!isBinary) {
         try {
@@ -140,6 +149,7 @@ export function setupDeepgramWebSocket(httpServer: Server) {
 
     clientWs.on('close', () => {
       console.log('xScribe: Client disconnected');
+      clearInterval(pingInterval);
       if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) {
         deepgramWs.close();
       }
@@ -147,6 +157,7 @@ export function setupDeepgramWebSocket(httpServer: Server) {
 
     clientWs.on('error', (err: Error) => {
       console.error('xScribe: Client WebSocket error:', err.message);
+      clearInterval(pingInterval);
       if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN) {
         deepgramWs.close();
       }
