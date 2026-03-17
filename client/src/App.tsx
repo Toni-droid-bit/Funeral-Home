@@ -11,6 +11,8 @@ import Dashboard from "@/pages/dashboard";
 import CasesList from "@/pages/cases-list";
 import CaseDetail from "@/pages/case-detail";
 import Communications from "@/pages/communications";
+import CommunicationsRecord from "@/pages/communications-record";
+import CommunicationsReview from "@/pages/communications-review";
 import ChecklistSettings from "@/pages/checklist-settings";
 import Login from "@/pages/login";
 import NotFound from "@/pages/not-found";
@@ -57,6 +59,12 @@ function Router() {
       </Route>
       <Route path="/communications">
         {() => <PrivateRoute component={Communications} />}
+      </Route>
+      <Route path="/communications/record">
+        {() => <PrivateRoute component={CommunicationsRecord} />}
+      </Route>
+      <Route path="/communications/review/:type/:id">
+        {() => <PrivateRoute component={CommunicationsReview} />}
       </Route>
       <Route path="/settings/checklists">
         {() => <PrivateRoute component={ChecklistSettings} />}
