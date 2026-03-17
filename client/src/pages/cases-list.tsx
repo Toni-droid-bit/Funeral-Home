@@ -11,7 +11,6 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { StatusBadge } from "@/components/status-badge";
 import { Search, Loader2, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import { useState } from "react";
@@ -19,6 +18,47 @@ import { Link, useLocation } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+
+const IMPORTANT_FIELD_PATHS = [
+  "deceasedInfo.title",
+  "deceasedInfo.age",
+  "deceasedInfo.gender",
+  "deceasedInfo.maritalStatus",
+  "deceasedInfo.placeOfDeathAddress",
+  "deceasedInfo.gpName",
+  "callerInfo.email",
+  "callerInfo.addressPostcode",
+  "billing.vulnerableClient",
+  "funeralService.serviceDate",
+  "funeralService.officiant",
+  "funeralService.venueName",
+];
+
+function getFieldValue(obj: any, path: string): any {
+  return path.split('.').reduce((o, k) => o?.[k], obj);
+}
+
+function getCompletionLevel(c: any): "red" | "amber" | "grey" {
+  if (c.status === "completed" || c.status === "closed") return "grey";
+  if (c.missingFields && c.missingFields.length > 0) return "red";
+  const intake = c.intakeData || {};
+  const anyImportantMissing = IMPORTANT_FIELD_PATHS.some(path => !getFieldValue(intake, path));
+  if (anyImportantMissing) return "amber";
+  return "grey";
+}
+
+function CompletionBadge({ level }: { level: "red" | "amber" | "grey" }) {
+  const config = {
+    red: { label: "Incomplete", className: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" },
+    amber: { label: "In Progress", className: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" },
+    grey: { label: "Complete", className: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400" },
+  }[level];
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${config.className}`}>
+      {config.label}
+    </span>
+  );
+}
 
 export default function CasesList() {
   const { data: cases, isLoading } = useCases();
@@ -103,7 +143,7 @@ export default function CasesList() {
                       {c.deceasedName}
                     </TableCell>
                     <TableCell>
-                      <StatusBadge status={c.status || "active"} />
+                      <CompletionBadge level={getCompletionLevel(c)} />
                     </TableCell>
                     <TableCell>{c.religion || "Secular"}</TableCell>
                     <TableCell>
